@@ -7,9 +7,20 @@ jobs:
   install-deps:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Install SDL i386 dependencies
+steps:
+      - name: Install and verify SDL i386 dependencies
         run: |
+          set -e
+
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev:i386 libsdl2-image-dev:i386
+
+          echo "Checking installed packages..."
+
+          dpkg -s libsdl2-dev:i386 > /dev/null
+          dpkg -s libsdl2-image-dev:i386 > /dev/null
+
+          dpkg -l | grep -E "libsdl2-dev:i386|libsdl2-image-dev:i386"
+
+          echo "All SDL i386 packages are installed successfully."
