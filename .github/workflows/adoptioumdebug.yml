@@ -114,7 +114,7 @@ jobs:
 
           foreach ($version in $versions) {
             for ($attempt = 1; $attempt -le $attemptsPerVersion; $attempt++) {
-              $url = "https://api.adoptium.net/v3/assets/latest/$version/hotspot"
+              $url = "https://api.adoptium.net/v3/assets/latest/$version/hotspot?architecture=x64&os=windows"
 
               Write-Host ""
               Write-Host "=== Version=$version Attempt=$attempt/$attemptsPerVersion ==="
