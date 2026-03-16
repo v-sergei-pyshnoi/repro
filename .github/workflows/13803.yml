@@ -7,7 +7,7 @@ jobs:
   install-deps:
     runs-on: ubuntu-latest
 
-steps:
+    steps:
       - name: Install and verify SDL i386 dependencies
         run: |
           set -e
