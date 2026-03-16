@@ -1,0 +1,182 @@
+name: Adoptium latest 406 diagnostic
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+
+    steps:
+      - name: Show environment
+        shell: pwsh
+        run: |
+          Write-Host "Date UTC: $([DateTime]::UtcNow.ToString('u'))"
+          Write-Host "Runner OS: $env:RUNNER_OS"
+          Write-Host "Image OS: $env:ImageOS"
+          Write-Host "Image Version: $env:ImageVersion"
+          $PSVersionTable | Format-List
+
+      - name: Probe latest endpoints
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          $versions = @("8", "11", "17", "21", "25")
+          $attemptsPerVersion = 10
+          $accept = "application/json"
+          $userAgent = "Adoptium406Diag/1.0 GitHubActions/$env:RUNNER_OS PowerShell/$($PSVersionTable.PSVersion)"
+
+          $results = New-Object System.Collections.ArrayList
+          $found406 = $false
+
+          function Read-ErrorBody {
+            param($Exception)
+
+            try {
+              if ($Exception.Response -and $Exception.Response.GetResponseStream()) {
+                $reader = New-Object System.IO.StreamReader($Exception.Response.GetResponseStream())
+                $body = $reader.ReadToEnd()
+                $reader.Close()
+                return $body
+              }
+            } catch {
+              return $null
+            }
+
+            return $null
+          }
+
+          foreach ($version in $versions) {
+            for ($attempt = 1; $attempt -le $attemptsPerVersion; $attempt++) {
+              $url = "https://api.adoptium.net/v3/assets/latest/$version/hotspot"
+
+              Write-Host ""
+              Write-Host "=== Version=$version Attempt=$attempt/$attemptsPerVersion ==="
+              Write-Host $url
+
+              $statusCode = $null
+              $statusDescription = $null
+              $contentType = $null
+              $bodyPreview = $null
+              $errorMessage = $null
+
+              try {
+                $response = Invoke-WebRequest `
+                  -Uri $url `
+                  -Headers @{ Accept = $accept } `
+                  -UserAgent $userAgent `
+                  -MaximumRedirection 0 `
+                  -TimeoutSec 60
+
+                $statusCode = [int]$response.StatusCode
+                $statusDescription = $response.StatusDescription
+                $contentType = $response.Headers["Content-Type"]
+
+                if ($response.Content) {
+                  $bodyPreview = $response.Content.Substring(0, [Math]::Min(300, $response.Content.Length))
+                }
+
+                Write-Host "StatusCode: $statusCode"
+                if ($contentType) { Write-Host "Content-Type: $contentType" }
+                if ($bodyPreview) {
+                  Write-Host "BodyPreview:"
+                  Write-Host $bodyPreview
+                } else {
+                  Write-Host "No body returned"
+                }
+
+                if ($statusCode -eq 406) {
+                  $found406 = $true
+                  Write-Host ">>> 406 NOT ACCEPTABLE DETECTED <<<" -ForegroundColor Red
+                }
+              }
+              catch {
+                $errorMessage = $_.Exception.Message
+
+                if ($_.Exception.Response) {
+                  try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
+                  try { $statusDescription = $_.Exception.Response.StatusDescription } catch {}
+                  try { $contentType = $_.Exception.Response.ContentType } catch {}
+
+                  $body = Read-ErrorBody -Exception $_.Exception
+                  if ($body) {
+                    $bodyPreview = $body.Substring(0, [Math]::Min(300, $body.Length))
+                  }
+
+                  Write-Host "StatusCode: $statusCode"
+                  Write-Host "Error: $errorMessage"
+                  if ($contentType) { Write-Host "Content-Type: $contentType" }
+                  if ($bodyPreview) {
+                    Write-Host "BodyPreview:"
+                    Write-Host $bodyPreview
+                  } else {
+                    Write-Host "No body returned"
+                  }
+
+                  if ($statusCode -eq 406) {
+                    $found406 = $true
+                    Write-Host ">>> 406 NOT ACCEPTABLE DETECTED <<<" -ForegroundColor Red
+                  }
+                }
+                else {
+                  Write-Host "Request failed without HTTP response"
+                  Write-Host "Error: $errorMessage"
+                }
+              }
+
+              [void]$results.Add([PSCustomObject]@{
+                TimestampUtc      = [DateTime]::UtcNow.ToString("u")
+                Version           = $version
+                Attempt           = $attempt
+                Url               = $url
+                StatusCode        = $statusCode
+                StatusDescription = $statusDescription
+                ContentType       = $contentType
+                ErrorMessage      = $errorMessage
+                BodyPreview       = $bodyPreview
+                UserAgent         = $userAgent
+              })
+
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          $jsonPath = Join-Path $PWD "adoptium-latest-results.json"
+          $csvPath  = Join-Path $PWD "adoptium-latest-results.csv"
+
+          $results | ConvertTo-Json -Depth 5 | Out-File -FilePath $jsonPath -Encoding utf8
+          $results | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
+
+          Write-Host ""
+          Write-Host "=== Summary ==="
+          $results |
+            Group-Object Version, StatusCode |
+            ForEach-Object {
+              $sample = $_.Group[0]
+              [PSCustomObject]@{
+                Version    = $sample.Version
+                StatusCode = $sample.StatusCode
+                Count      = $_.Count
+              }
+            } |
+            Format-Table -AutoSize
+
+          "FOUND_406=$found406" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload probe results
+        uses: actions/upload-artifact@v4
+        with:
+          name: adoptium-latest-diagnostic
+          path: |
+            adoptium-latest-results.json
+            adoptium-latest-results.csv
+
+      - name: Fail if 406 was detected
+        shell: pwsh
+        run: |
+          if ($env:FOUND_406 -eq "True") {
+            Write-Error "One or more 406 responses were detected."
+          } else {
+            Write-Host "No 406 responses detected."
+          }
