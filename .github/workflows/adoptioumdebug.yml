@@ -1,4 +1,4 @@
-name: Adoptium latest 406 diagnostic
+name: Adoptium latest deep diagnostic
 
 on:
   workflow_dispatch:
@@ -15,9 +15,42 @@ jobs:
           Write-Host "Runner OS: $env:RUNNER_OS"
           Write-Host "Image OS: $env:ImageOS"
           Write-Host "Image Version: $env:ImageVersion"
+          Write-Host "ComputerName: $env:COMPUTERNAME"
+          Write-Host "Machine Name: $env:RUNNER_NAME"
           $PSVersionTable | Format-List
 
-      - name: Probe latest endpoints
+          try {
+            Write-Host "TLS before:"
+            [System.Net.ServicePointManager]::SecurityProtocol
+          } catch {}
+
+          try {
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+          } catch {}
+
+          try {
+            Write-Host "TLS after:"
+            [System.Net.ServicePointManager]::SecurityProtocol
+          } catch {}
+
+      - name: DNS and network precheck
+        shell: pwsh
+        run: |
+          Write-Host "=== DNS lookup ==="
+          try {
+            Resolve-DnsName api.adoptium.net -Type A | Format-Table -AutoSize
+          } catch {
+            Write-Host "Resolve-DnsName failed: $($_.Exception.Message)"
+          }
+
+          Write-Host "=== Test-NetConnection ==="
+          try {
+            Test-NetConnection api.adoptium.net -Port 443 | Format-List
+          } catch {
+            Write-Host "Test-NetConnection failed: $($_.Exception.Message)"
+          }
+
+      - name: Probe latest endpoints deeply
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
@@ -25,8 +58,7 @@ jobs:
           $versions = @("8", "11", "17", "21", "25")
           $attemptsPerVersion = 10
           $accept = "application/json"
-          $userAgent = "Adoptium406Diag/1.0 GitHubActions/$env:RUNNER_OS PowerShell/$($PSVersionTable.PSVersion)"
-
+          $userAgent = "Adoptium406DeepDiag/1.0 GitHubActions/$env:RUNNER_OS PowerShell/$($PSVersionTable.PSVersion)"
           $results = New-Object System.Collections.ArrayList
           $found406 = $false
 
@@ -35,14 +67,47 @@ jobs:
 
             try {
               if ($Exception.Response -and $Exception.Response.GetResponseStream()) {
-                $reader = New-Object System.IO.StreamReader($Exception.Response.GetResponseStream())
+                $stream = $Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
                 $body = $reader.ReadToEnd()
                 $reader.Close()
                 return $body
               }
-            } catch {
-              return $null
-            }
+            } catch {}
+
+            return $null
+          }
+
+          function Get-HeadersAsHashtable {
+            param($Headers)
+
+            $map = @{}
+            if (-not $Headers) { return $map }
+
+            try {
+              foreach ($key in $Headers.Keys) {
+                try {
+                  $map[$key] = [string]$Headers[$key]
+                } catch {
+                  $map[$key] = ""
+                }
+              }
+            } catch {}
+
+            return $map
+          }
+
+          function Get-HeaderValue {
+            param(
+              $Headers,
+              [string]$Name
+            )
+
+            try {
+              if ($Headers -and $Headers[$Name]) {
+                return [string]$Headers[$Name]
+              }
+            } catch {}
 
             return $null
           }
@@ -53,15 +118,31 @@ jobs:
 
               Write-Host ""
               Write-Host "=== Version=$version Attempt=$attempt/$attemptsPerVersion ==="
-              Write-Host $url
+              Write-Host "URL: $url"
+              Write-Host "User-Agent: $userAgent"
 
               $statusCode = $null
               $statusDescription = $null
               $contentType = $null
+              $server = $null
+              $via = $null
+              $xCache = $null
+              $cfCacheStatus = $null
+              $location = $null
               $bodyPreview = $null
               $errorMessage = $null
+              $remoteAddress = $null
+              $resolvedIps = $null
+              $headersDump = $null
+              $durationMs = $null
 
               try {
+                try {
+                  $resolvedIps = (Resolve-DnsName api.adoptium.net -Type A -ErrorAction Stop | Select-Object -ExpandProperty IPAddress) -join ", "
+                } catch {}
+
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
                 $response = Invoke-WebRequest `
                   -Uri $url `
                   -Headers @{ Accept = $accept } `
@@ -69,16 +150,41 @@ jobs:
                   -MaximumRedirection 0 `
                   -TimeoutSec 60
 
+                $sw.Stop()
+                $durationMs = $sw.ElapsedMilliseconds
+
                 $statusCode = [int]$response.StatusCode
                 $statusDescription = $response.StatusDescription
-                $contentType = $response.Headers["Content-Type"]
+                $contentType = Get-HeaderValue -Headers $response.Headers -Name "Content-Type"
+                $server = Get-HeaderValue -Headers $response.Headers -Name "Server"
+                $via = Get-HeaderValue -Headers $response.Headers -Name "Via"
+                $xCache = Get-HeaderValue -Headers $response.Headers -Name "X-Cache"
+                $cfCacheStatus = Get-HeaderValue -Headers $response.Headers -Name "CF-Cache-Status"
+                $location = Get-HeaderValue -Headers $response.Headers -Name "Location"
+                $headersDump = (Get-HeadersAsHashtable -Headers $response.Headers | ConvertTo-Json -Compress)
+
+                if ($response.BaseResponse -and $response.BaseResponse.ResponseUri) {
+                  try { $remoteAddress = $response.BaseResponse.ResponseUri.Host } catch {}
+                }
 
                 if ($response.Content) {
-                  $bodyPreview = $response.Content.Substring(0, [Math]::Min(300, $response.Content.Length))
+                  $bodyPreview = $response.Content.Substring(0, [Math]::Min(500, $response.Content.Length))
                 }
 
                 Write-Host "StatusCode: $statusCode"
+                Write-Host "StatusDescription: $statusDescription"
+                Write-Host "DurationMs: $durationMs"
+                if ($resolvedIps) { Write-Host "Resolved IPs: $resolvedIps" }
+                if ($server) { Write-Host "Server: $server" }
+                if ($via) { Write-Host "Via: $via" }
+                if ($xCache) { Write-Host "X-Cache: $xCache" }
+                if ($cfCacheStatus) { Write-Host "CF-Cache-Status: $cfCacheStatus" }
                 if ($contentType) { Write-Host "Content-Type: $contentType" }
+                if ($location) { Write-Host "Location: $location" }
+
+                Write-Host "Headers:"
+                $response.Headers.GetEnumerator() | Sort-Object Name | Format-Table -AutoSize
+
                 if ($bodyPreview) {
                   Write-Host "BodyPreview:"
                   Write-Host $bodyPreview
@@ -98,15 +204,34 @@ jobs:
                   try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
                   try { $statusDescription = $_.Exception.Response.StatusDescription } catch {}
                   try { $contentType = $_.Exception.Response.ContentType } catch {}
+                  try { $server = [string]$_.Exception.Response.Headers["Server"] } catch {}
+                  try { $via = [string]$_.Exception.Response.Headers["Via"] } catch {}
+                  try { $xCache = [string]$_.Exception.Response.Headers["X-Cache"] } catch {}
+                  try { $cfCacheStatus = [string]$_.Exception.Response.Headers["CF-Cache-Status"] } catch {}
+                  try { $location = [string]$_.Exception.Response.Headers["Location"] } catch {}
+                  try { $headersDump = (Get-HeadersAsHashtable -Headers $_.Exception.Response.Headers | ConvertTo-Json -Compress) } catch {}
 
                   $body = Read-ErrorBody -Exception $_.Exception
                   if ($body) {
-                    $bodyPreview = $body.Substring(0, [Math]::Min(300, $body.Length))
+                    $bodyPreview = $body.Substring(0, [Math]::Min(500, $body.Length))
                   }
 
                   Write-Host "StatusCode: $statusCode"
+                  Write-Host "StatusDescription: $statusDescription"
                   Write-Host "Error: $errorMessage"
+                  if ($resolvedIps) { Write-Host "Resolved IPs: $resolvedIps" }
+                  if ($server) { Write-Host "Server: $server" }
+                  if ($via) { Write-Host "Via: $via" }
+                  if ($xCache) { Write-Host "X-Cache: $xCache" }
+                  if ($cfCacheStatus) { Write-Host "CF-Cache-Status: $cfCacheStatus" }
                   if ($contentType) { Write-Host "Content-Type: $contentType" }
+                  if ($location) { Write-Host "Location: $location" }
+
+                  try {
+                    Write-Host "Headers:"
+                    $_.Exception.Response.Headers.GetEnumerator() | Sort-Object Name | Format-Table -AutoSize
+                  } catch {}
+
                   if ($bodyPreview) {
                     Write-Host "BodyPreview:"
                     Write-Host $bodyPreview
@@ -132,9 +257,18 @@ jobs:
                 Url               = $url
                 StatusCode        = $statusCode
                 StatusDescription = $statusDescription
+                DurationMs        = $durationMs
                 ContentType       = $contentType
+                Server            = $server
+                Via               = $via
+                XCache            = $xCache
+                CFCacheStatus     = $cfCacheStatus
+                Location          = $location
                 ErrorMessage      = $errorMessage
                 BodyPreview       = $bodyPreview
+                ResolvedIPs       = $resolvedIps
+                RemoteAddress     = $remoteAddress
+                HeadersJson       = $headersDump
                 UserAgent         = $userAgent
               })
 
@@ -142,35 +276,38 @@ jobs:
             }
           }
 
-          $jsonPath = Join-Path $PWD "adoptium-latest-results.json"
-          $csvPath  = Join-Path $PWD "adoptium-latest-results.csv"
+          $jsonPath = Join-Path $PWD "adoptium-deep-results.json"
+          $csvPath = Join-Path $PWD "adoptium-deep-results.csv"
 
-          $results | ConvertTo-Json -Depth 5 | Out-File -FilePath $jsonPath -Encoding utf8
+          $results | ConvertTo-Json -Depth 6 | Out-File -FilePath $jsonPath -Encoding utf8
           $results | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
 
           Write-Host ""
           Write-Host "=== Summary ==="
           $results |
-            Group-Object Version, StatusCode |
+            Group-Object Version, StatusCode, Server, XCache, CFCacheStatus |
             ForEach-Object {
               $sample = $_.Group[0]
               [PSCustomObject]@{
-                Version    = $sample.Version
-                StatusCode = $sample.StatusCode
-                Count      = $_.Count
+                Version       = $sample.Version
+                StatusCode    = $sample.StatusCode
+                Server        = $sample.Server
+                XCache        = $sample.XCache
+                CFCacheStatus = $sample.CFCacheStatus
+                Count         = $_.Count
               }
             } |
-            Format-Table -AutoSize
+            Format-Table -AutoSize -Wrap
 
           "FOUND_406=$found406" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Upload probe results
+      - name: Upload diagnostic results
         uses: actions/upload-artifact@v4
         with:
-          name: adoptium-latest-diagnostic
+          name: adoptium-deep-diagnostic
           path: |
-            adoptium-latest-results.json
-            adoptium-latest-results.csv
+            adoptium-deep-results.json
+            adoptium-deep-results.csv
 
       - name: Fail if 406 was detected
         shell: pwsh
