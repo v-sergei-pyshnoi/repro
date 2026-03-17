@@ -1,0 +1,112 @@
+name: SDL i386 diagnostic repro
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Set up repository
+        uses: actions/checkout@v4
+        with:
+          show-progress: false
+          fetch-depth: 1
+
+      - name: Show base system info
+        run: |
+          set -x
+          uname -a
+          lsb_release -a || cat /etc/os-release
+          dpkg --print-architecture
+          dpkg --print-foreign-architectures || true
+
+      - name: Enable i386
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture i386
+          dpkg --print-foreign-architectures
+
+      - name: Show apt sources
+        run: |
+          set -x
+          sudo find /etc/apt -maxdepth 3 -type f | sort
+          echo "===== /etc/apt/sources.list ====="
+          cat /etc/apt/sources.list || true
+          echo "===== /etc/apt/sources.list.d ====="
+          for f in /etc/apt/sources.list.d/*; do
+            echo "----- $f -----"
+            cat "$f" || true
+          done
+
+      - name: Retry apt update and inspect package candidates
+        run: |
+          set -euxo pipefail
+
+          for attempt in 1 2 3; do
+            echo "=============================="
+            echo "APT UPDATE ATTEMPT $attempt"
+            echo "=============================="
+
+            sudo apt-get clean
+            sudo rm -rf /var/lib/apt/lists/*
+            sudo apt-get update
+
+            echo "===== apt-cache policy ====="
+            apt-cache policy \
+              libsdl2-dev:i386 \
+              libsdl2-image-dev:i386 \
+              libglib2.0-dev:i386 \
+              libglib2.0-dev-bin:i386 \
+              libglib2.0-dev-bin-linux:i386 || true
+
+            echo "===== apt-cache depends libsdl2-dev:i386 ====="
+            apt-cache depends libsdl2-dev:i386 || true
+
+            echo "===== apt-cache showpkg libglib2.0-dev:i386 ====="
+            apt-cache showpkg libglib2.0-dev:i386 || true
+
+            echo "===== apt-cache madison ====="
+            apt-cache madison \
+              libsdl2-dev:i386 \
+              libglib2.0-dev:i386 \
+              libglib2.0-dev-bin:i386 \
+              libglib2.0-dev-bin-linux:i386 || true
+
+            echo "===== simulated install ====="
+            sudo apt-get install -s libsdl2-dev:i386 || true
+
+            echo "===== real install attempt ====="
+            if sudo apt-get install -y libsdl2-dev:i386; then
+              echo "Install succeeded on attempt $attempt"
+              exit 0
+            fi
+
+            echo "Install failed on attempt $attempt"
+            sleep 15
+          done
+
+          echo "All install attempts failed"
+          exit 1
+
+      - name: Collect dpkg and apt state after failure
+        if: failure()
+        run: |
+          set +e
+          echo "===== dpkg audit ====="
+          dpkg --audit
+
+          echo "===== installed glib/sdl packages ====="
+          dpkg -l | grep -E 'glib2\.0|libsdl2' || true
+
+          echo "===== apt-cache policy after failure ====="
+          apt-cache policy \
+            libsdl2-dev:i386 \
+            libsdl2-image-dev:i386 \
+            libglib2.0-dev:i386 \
+            libglib2.0-dev-bin:i386 \
+            libglib2.0-dev-bin-linux:i386 || true
+
+          echo "===== simulated install after failure ====="
+          sudo apt-get install -s libsdl2-dev:i386 || true
