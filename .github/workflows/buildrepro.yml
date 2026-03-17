@@ -1,0 +1,21 @@
+name: Build repro
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Set up repository
+      uses: actions/checkout@v4
+      with:
+        show-progress: false
+        fetch-depth: 1
+    - name: Install dependencies
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get update
+        sudo apt-get install -y libsdl2-dev:i386
