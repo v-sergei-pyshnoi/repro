@@ -5,7 +5,7 @@ on:
 
 jobs:
   install-deps:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Set up repository
