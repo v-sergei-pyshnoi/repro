@@ -5,7 +5,11 @@ on:
 
 jobs:
   build:
-    runs-on: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
     steps:
     - name: Set up repository
       uses: actions/checkout@v4
