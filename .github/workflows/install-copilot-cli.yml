@@ -23,4 +23,4 @@ jobs:
           echo '----------------------'
           ls -l
           echo '----------------------'
-          copilot help
+          copilot --version
