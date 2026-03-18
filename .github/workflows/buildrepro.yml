@@ -16,5 +16,8 @@ jobs:
       run: |
         sudo dpkg --add-architecture i386
         sudo apt-get update
+        sudo apt-cache policy libglib2.0-dev-bin:i386
+        sudo apt-cache policy libglib2.0-dev-bin-linux:i386
+        sudo apt-cache policy libglib2.0-dev:i386
         sudo apt-cache policy libsdl2-dev:i386
         sudo apt-get install -y libsdl2-dev:i386
