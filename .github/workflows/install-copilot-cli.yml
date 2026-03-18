@@ -24,3 +24,4 @@ jobs:
           ls -l
           echo '----------------------'
           copilot --version
+          yq -V
