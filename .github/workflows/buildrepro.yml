@@ -24,4 +24,5 @@ jobs:
         sudo apt-cache policy libglib2.0-dev-bin-linux:i386
         sudo apt-cache policy libglib2.0-dev:i386
         sudo apt-cache policy libsdl2-dev:i386
-        sudo apt-get install -y libsdl2-dev:i386 --solver 3.0
+        sudo apt-mark hold grub-common grub-efi-amd64-bin python3 python3-apt shim-signed
+        sudo apt-get install -y libsdl2-dev:i386
