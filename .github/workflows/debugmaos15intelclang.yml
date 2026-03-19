@@ -1,17 +1,14 @@
-name: Repro and workaround macOS std::promise link issue
+name: Minimal macOS clang repro
 
 on:
   workflow_dispatch:
 
 jobs:
-  repro-workaround:
+  repro:
     runs-on: macos-15-intel
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create minimal repro source
+      - name: Create repro source
         shell: bash
         run: |
           cat > test.cpp <<'EOF'
@@ -26,131 +23,62 @@ jobs:
           }
           EOF
 
-          echo "===== test.cpp ====="
-          cat test.cpp
-
-      - name: Print default toolchain info
+      - name: Step 1 - show clang versions
         shell: bash
         run: |
-          echo "===== DEFAULT ENV ====="
-          echo "PATH=$PATH"
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
           echo
-          echo "which clang:   $(which clang || true)"
-          echo "which clang++: $(which clang++ || true)"
-          echo "which cc:      $(which cc || true)"
-          echo "which c++:     $(which c++ || true)"
+          clang --version
           echo
-          echo "===== versions ====="
-          clang --version || true
+          clang++ --version
           echo
-          clang++ --version || true
-          echo
-          cc --version || true
-          echo
-          c++ --version || true
-          echo
-          echo "===== xcrun ====="
-          xcrun --find clang || true
-          xcrun --find clang++ || true
-          xcrun --sdk macosx --show-sdk-path || true
-          echo
-          xcodebuild -version || true
+          echo "xcrun clang:   $(xcrun --find clang)"
+          echo "xcrun clang++: $(xcrun --find clang++)"
 
-      - name: Reproduce failure with default clang++
-        id: repro_default
+      - name: Step 2 - reproduce error
         shell: bash
         continue-on-error: true
         run: |
-          set -o pipefail
-          echo "===== REPRODUCE WITH DEFAULT clang++ ====="
-          clang++ -v test.cpp -std=c++17 -o test-default 2>&1 | tee default-build.log
+          clang++ -v test.cpp -std=c++17 -o test
 
-      - name: Show default repro result
+      - name: Step 3 - apply workaround
         shell: bash
         run: |
-          echo "===== DEFAULT RESULT ====="
-          echo "Step outcome: ${{ steps.repro_default.outcome }}"
-          echo
+          mkdir -p "$HOME/bin"
 
-          if [ -f test-default ]; then
-            echo "Default build unexpectedly succeeded"
-            ./test-default || true
-          else
-            echo "Default build failed as expected"
-          fi
-          echo
-          echo "Last 80 lines of default-build.log:"
-          tail -n 80 default-build.log || true
+          cat > "$HOME/bin/clang" <<'EOF'
+          #!/bin/bash
+          exec "$(xcrun --find clang)" "$@"
+          EOF
 
-      - name: Apply workaround
-        shell: bash
-        run: |
-          echo "CC=$(xcrun --find clang)" >> "$GITHUB_ENV"
-          echo "CXX=$(xcrun --find clang++)" >> "$GITHUB_ENV"
+          cat > "$HOME/bin/clang++" <<'EOF'
+          #!/bin/bash
+          exec "$(xcrun --find clang++)" "$@"
+          EOF
+
+          chmod +x "$HOME/bin/clang" "$HOME/bin/clang++"
+
+          echo "PATH=$HOME/bin:$PATH" >> "$GITHUB_ENV"
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
 
-      - name: Print workaround toolchain info
+      - name: Step 4 - show clang versions again
         shell: bash
         run: |
-          echo "===== WORKAROUND ENV ====="
-          echo "CC=$CC"
-          echo "CXX=$CXX"
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+          echo "xcrun clang:   $(xcrun --find clang)"
+          echo "xcrun clang++: $(xcrun --find clang++)"
+          echo
           echo "SDKROOT=$SDKROOT"
-          echo
-          "$CC" --version
-          echo
-          "$CXX" --version
-          echo
-          xcrun --find clang
-          xcrun --find clang++
-          xcrun --sdk macosx --show-sdk-path
 
-      - name: Retry build with Apple Clang workaround
-        id: repro_workaround
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          echo "===== RETRY WITH APPLE CLANG ====="
-          "$CXX" -v test.cpp -std=c++17 -isysroot "$SDKROOT" -o test-workaround 2>&1 | tee workaround-build.log
-
-      - name: Show workaround result
+      - name: Step 5 - retry same command after workaround
         shell: bash
         run: |
-          echo "===== WORKAROUND RESULT ====="
-          echo "Step outcome: ${{ steps.repro_workaround.outcome }}"
-          echo
-
-          if [ -f test-workaround ]; then
-            echo "Workaround build succeeded"
-            file ./test-workaround || true
-            otool -L ./test-workaround || true
-            echo
-            echo "===== RUN test-workaround ====="
-            ./test-workaround
-          else
-            echo "Workaround build failed"
-          fi
-          echo
-          echo "Last 80 lines of workaround-build.log:"
-          tail -n 80 workaround-build.log || true
-
-      - name: Final summary
-        shell: bash
-        run: |
-          echo "===== FINAL SUMMARY ====="
-          echo "Default build outcome:    ${{ steps.repro_default.outcome }}"
-          echo "Workaround build outcome: ${{ steps.repro_workaround.outcome }}"
-          echo
-
-          if [ -f test-default ]; then
-            echo "default: binary produced"
-          else
-            echo "default: no binary"
-          fi
-
-          if [ -f test-workaround ]; then
-            echo "workaround: binary produced"
-          else
-            echo "workaround: no binary"
-          fi
+          clang++ -v test.cpp -std=c++17 -o test
+          ./test
