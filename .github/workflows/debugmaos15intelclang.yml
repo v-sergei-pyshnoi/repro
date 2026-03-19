@@ -1,0 +1,94 @@
+name: Debug macOS toolchain
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug-clang:
+    runs-on: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Print PATH and toolchain info
+        shell: bash
+        run: |
+          echo "===== PATH ====="
+          echo "$PATH"
+          echo
+
+          echo "===== which ====="
+          which clang || true
+          which clang++ || true
+          which cc || true
+          which c++ || true
+          which ld || true
+          which xcodebuild || true
+          which xcrun || true
+          echo
+
+          echo "===== command -v ====="
+          command -v clang || true
+          command -v clang++ || true
+          command -v cc || true
+          command -v c++ || true
+          command -v ld || true
+          echo
+
+          echo "===== versions ====="
+          clang --version || true
+          echo
+          clang++ --version || true
+          echo
+          cc --version || true
+          echo
+          c++ --version || true
+          echo
+          ld -v || true
+          echo
+
+          echo "===== xcrun ====="
+          xcrun --find clang || true
+          xcrun --find clang++ || true
+          xcrun --find ld || true
+          xcrun --sdk macosx --show-sdk-path || true
+          xcrun --sdk macosx --show-sdk-version || true
+          echo
+
+          echo "===== Xcode ====="
+          xcode-select -p || true
+          xcodebuild -version || true
+          echo
+
+          echo "===== detailed file info ====="
+          ls -l "$(which clang)" || true
+          ls -l "$(which clang++)" || true
+          echo
+
+          echo "===== compiler predefined macros ====="
+          echo | clang++ -dM -E -x c++ - | grep -E '__clang|__apple_build_version__|__cplusplus' || true
+          echo
+
+      - name: Compile tiny test with verbose output
+        shell: bash
+        run: |
+          cat > test.cpp <<'EOF'
+          #include <iostream>
+          #include <future>
+
+          int main() {
+              std::promise<int> p;
+              p.set_value(42);
+              std::cout << p.get_future().get() << std::endl;
+              return 0;
+          }
+          EOF
+
+          echo "===== verbose compile ====="
+          clang++ -v test.cpp -std=c++17 -o test || true
+          echo
+
+          echo "===== binary info ====="
+          file ./test || true
+          otool -L ./test || true
