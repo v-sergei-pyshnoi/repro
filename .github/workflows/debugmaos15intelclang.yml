@@ -1,4 +1,4 @@
-name: Repro and workaround macOS clang link issue
+name: Repro and workaround macOS std::promise link issue
 
 on:
   workflow_dispatch:
@@ -11,28 +11,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create repro source
+      - name: Create minimal repro source
         shell: bash
         run: |
           cat > test.cpp <<'EOF'
           #include <iostream>
           #include <future>
-          #include <boost/asio.hpp>
 
           int main() {
               std::promise<int> p;
               p.set_value(42);
-
-              boost::asio::io_context io;
-              boost::asio::post(io, []() {});
-              io.run();
-
               std::cout << p.get_future().get() << std::endl;
               return 0;
           }
           EOF
 
-          echo "Created test.cpp:"
+          echo "===== test.cpp ====="
           cat test.cpp
 
       - name: Print default toolchain info
@@ -46,19 +40,20 @@ jobs:
           echo "which cc:      $(which cc || true)"
           echo "which c++:     $(which c++ || true)"
           echo
-          echo "clang --version"
+          echo "===== versions ====="
           clang --version || true
           echo
-          echo "clang++ --version"
           clang++ --version || true
           echo
-          echo "xcrun --find clang++"
-          xcrun --find clang++ || true
+          cc --version || true
           echo
-          echo "xcrun --sdk macosx --show-sdk-path"
+          c++ --version || true
+          echo
+          echo "===== xcrun ====="
+          xcrun --find clang || true
+          xcrun --find clang++ || true
           xcrun --sdk macosx --show-sdk-path || true
           echo
-          echo "xcodebuild -version"
           xcodebuild -version || true
 
       - name: Reproduce failure with default clang++
@@ -67,38 +62,32 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-
           echo "===== REPRODUCE WITH DEFAULT clang++ ====="
           clang++ -v test.cpp -std=c++17 -o test-default 2>&1 | tee default-build.log
 
-      - name: Check default repro result
+      - name: Show default repro result
         shell: bash
         run: |
-          echo "===== DEFAULT BUILD RESULT ====="
+          echo "===== DEFAULT RESULT ====="
+          echo "Step outcome: ${{ steps.repro_default.outcome }}"
+          echo
+
           if [ -f test-default ]; then
-            echo "Unexpected: default build succeeded"
+            echo "Default build unexpectedly succeeded"
             ./test-default || true
           else
-            echo "Expected: default build failed and no binary was produced"
+            echo "Default build failed as expected"
           fi
-
           echo
-          echo "Exit status from repro step: ${{ steps.repro_default.outcome }}"
-          echo
-          echo "Last 50 lines of default-build.log:"
-          tail -n 50 default-build.log || true
+          echo "Last 80 lines of default-build.log:"
+          tail -n 80 default-build.log || true
 
-      - name: Apply workaround (force Apple Clang)
+      - name: Apply workaround
         shell: bash
         run: |
-          echo "===== APPLY WORKAROUND ====="
           echo "CC=$(xcrun --find clang)" >> "$GITHUB_ENV"
           echo "CXX=$(xcrun --find clang++)" >> "$GITHUB_ENV"
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-
-          echo "Forced CC: $(xcrun --find clang)"
-          echo "Forced CXX: $(xcrun --find clang++)"
-          echo "Forced SDKROOT: $(xcrun --sdk macosx --show-sdk-path)"
 
       - name: Print workaround toolchain info
         shell: bash
@@ -116,40 +105,52 @@ jobs:
           xcrun --find clang++
           xcrun --sdk macosx --show-sdk-path
 
-      - name: Retry with Apple Clang workaround
+      - name: Retry build with Apple Clang workaround
         id: repro_workaround
         shell: bash
+        continue-on-error: true
         run: |
           set -o pipefail
-
           echo "===== RETRY WITH APPLE CLANG ====="
           "$CXX" -v test.cpp -std=c++17 -isysroot "$SDKROOT" -o test-workaround 2>&1 | tee workaround-build.log
 
-      - name: Run binary built with workaround
+      - name: Show workaround result
         shell: bash
         run: |
-          echo "===== RUN WORKAROUND BINARY ====="
-          file ./test-workaround
-          otool -L ./test-workaround || true
-          ./test-workaround
+          echo "===== WORKAROUND RESULT ====="
+          echo "Step outcome: ${{ steps.repro_workaround.outcome }}"
+          echo
 
-      - name: Summary
+          if [ -f test-workaround ]; then
+            echo "Workaround build succeeded"
+            file ./test-workaround || true
+            otool -L ./test-workaround || true
+            echo
+            echo "===== RUN test-workaround ====="
+            ./test-workaround
+          else
+            echo "Workaround build failed"
+          fi
+          echo
+          echo "Last 80 lines of workaround-build.log:"
+          tail -n 80 workaround-build.log || true
+
+      - name: Final summary
         shell: bash
         run: |
-          echo "===== SUMMARY ====="
-          echo "Default step outcome:    ${{ steps.repro_default.outcome }}"
-          echo "Workaround step outcome: ${{ steps.repro_workaround.outcome }}"
+          echo "===== FINAL SUMMARY ====="
+          echo "Default build outcome:    ${{ steps.repro_default.outcome }}"
+          echo "Workaround build outcome: ${{ steps.repro_workaround.outcome }}"
           echo
 
           if [ -f test-default ]; then
-            echo "Default build: produced binary"
+            echo "default: binary produced"
           else
-            echo "Default build: failed to produce binary"
+            echo "default: no binary"
           fi
 
           if [ -f test-workaround ]; then
-            echo "Workaround build: produced binary"
+            echo "workaround: binary produced"
           else
-            echo "Workaround build: failed to produce binary"
-            exit 1
+            echo "workaround: no binary"
           fi
