@@ -19,6 +19,7 @@ jobs:
       # Runs a set of commands using the runners shell
       - name: show clang
         run: |
+          echo $PATH
           echo "which clang:   $(which clang)"
           echo "which clang++: $(which clang++)"
           echo
