@@ -1,0 +1,99 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Brew Te
+
+# Controls when the workflow will run
+on:
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  Installed_brew:
+    # The type of runner that the job will run on
+    runs-on: macos-15
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+
+      # Runs a set of commands using the runners shell
+      - name: show clang
+        run: |
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+
+      - name: uninstall llvm
+        run: |
+          brew uninstall llvm@18
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+
+      - name: install llvm
+        run: |
+          brew install llvm@18
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+
+  Updated_brew:
+    # The type of runner that the job will run on
+    runs-on: macos-15
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+
+      # Runs a set of commands using the runners shell
+      - name: show clang
+        run: |
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+
+      - name: uninstall llvm
+        run: |
+          brew uninstall llvm@18
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+      - name: update brew
+        run: |
+          brew install llvm@18
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
+      - name: install llvm
+        run: |
+          brew install llvm@18
+          echo "which clang:   $(which clang)"
+          echo "which clang++: $(which clang++)"
+          echo
+          clang --version
+          echo
+          clang++ --version
+          echo
