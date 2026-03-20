@@ -5,8 +5,7 @@ on:
 
 jobs:
   repro:
-    runs-on: macos-15-intel
-
+    runs-on: macos-14
     steps:
       - name: Create repro source
         shell: bash
