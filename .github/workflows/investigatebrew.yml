@@ -79,14 +79,8 @@ jobs:
           echo
       - name: update brew
         run: |
-          brew install llvm@18
-          echo "which clang:   $(which clang)"
-          echo "which clang++: $(which clang++)"
-          echo
-          clang --version
-          echo
-          clang++ --version
-          echo
+          brew update
+          brew --version
       - name: install llvm
         run: |
           brew install llvm@18
