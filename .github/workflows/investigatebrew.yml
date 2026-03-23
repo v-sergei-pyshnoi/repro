@@ -92,3 +92,4 @@ jobs:
           echo
           clang++ --version
           echo
+          $(brew --prefix llvm@18)/bin/clang --version
