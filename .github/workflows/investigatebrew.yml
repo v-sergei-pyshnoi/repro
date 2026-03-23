@@ -52,7 +52,7 @@ jobs:
 
   Updated_brew:
     # The type of runner that the job will run on
-    runs-on: macos-15
+    runs-on: macos-15-intel
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
