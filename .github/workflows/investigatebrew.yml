@@ -85,7 +85,8 @@ jobs:
           brew --version
       - name: install llvm
         run: |
-          brew install llvm@18 --skip-link
+          brew install llvm@18
+          brew unlink llvm@18
           echo "which clang:   $(which clang)"
           echo "which clang++: $(which clang++)"
           echo
