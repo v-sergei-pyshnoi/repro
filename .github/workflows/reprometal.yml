@@ -8,16 +8,26 @@ jobs:
     runs-on: macos-26
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Show Xcode info
+      - name: Show environment
         run: |
-          xcode-select -p
-          xcodebuild -version
-          sw_vers
+          echo "Developer dir:"
+          xcode-select -p || true
+          echo
+          echo "Xcode version:"
+          xcodebuild -version || true
+          echo
+          echo "macOS version:"
+          sw_vers || true
 
-      - name: Create minimal Metal shader
+      - name: Check metal tool
+        run: |
+          echo "Trying to locate metal..."
+          xcrun -f metal || true
+          echo
+          echo "Checking MetalToolchain component..."
+          xcodebuild -showComponent MetalToolchain || true
+
+      - name: Create minimal shader
         run: |
           cat > test.metal <<'EOF'
           #include <metal_stdlib>
@@ -29,6 +39,6 @@ jobs:
           }
           EOF
 
-      - name: Reproduce error
+      - name: Reproduce missing Metal Toolchain error
         run: |
           xcrun metal -c test.metal -o test.air
