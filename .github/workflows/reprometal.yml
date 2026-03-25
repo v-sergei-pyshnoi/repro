@@ -40,6 +40,15 @@ jobs:
           EOF
       - name: "Run xcodebuild -downloadComponent MetalToolchain"
         run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Check metal tool
+        run: |
+          echo "Trying to locate metal..."
+          xcrun -f metal || true
+          echo
+          echo "Checking MetalToolchain component..."
+          xcodebuild -showComponent MetalToolchain || true
+ 
       - name: Reproduce missing Metal Toolchain error
         run: |
           xcrun metal -c test.metal -o test.air
