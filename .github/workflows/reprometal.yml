@@ -1,0 +1,34 @@
+name: Repro Metal Toolchain Error
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode info
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          sw_vers
+
+      - name: Create minimal Metal shader
+        run: |
+          cat > test.metal <<'EOF'
+          #include <metal_stdlib>
+          using namespace metal;
+
+          kernel void test_kernel(device float* data [[buffer(0)]],
+                                  uint id [[thread_position_in_grid]]) {
+              data[id] = 1.0;
+          }
+          EOF
+
+      - name: Reproduce error
+        run: |
+          xcrun metal -c test.metal -o test.air
