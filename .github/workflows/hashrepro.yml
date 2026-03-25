@@ -1,0 +1,24 @@
+name: Hash repro
+on:
+  workflow_dispatch: 
+jobs:
+  repro:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - macos-15
+          - macos-15-intel
+          - ubuntu-24.04
+      fail-fast: false
+    steps:
+      - name: Find files
+        run: |
+          cp /etc/passwd ./
+          find . -ls
+      - name: Get hash
+        run: |
+          echo ${{ hashFiles('passwd') }}
+      - name: Get hash with pattern
+        run: |
+          echo ${{ hashFiles('**/passwd') }}
