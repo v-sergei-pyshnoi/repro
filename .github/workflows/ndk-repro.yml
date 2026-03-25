@@ -1,0 +1,75 @@
+name: test-setup-ndk
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ndk:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ndk-version: [r27c]
+        abi: [arm64-v8a, x86_64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ matrix.ndk-version }}
+
+      - name: Show NDK info
+        shell: bash
+        run: |
+          echo "NDK path: ${{ steps.setup-ndk.outputs.ndk-path }}"
+          test -d "${{ steps.setup-ndk.outputs.ndk-path }}"
+          test -f "${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake"
+          ls -la "${{ steps.setup-ndk.outputs.ndk-path }}"
+          cat "${{ steps.setup-ndk.outputs.ndk-path }}/source.properties"
+
+      - name: Create minimal test project
+        shell: bash
+        run: |
+          mkdir -p smoke-test
+          cat > smoke-test/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.20)
+          project(ndk_smoke_test CXX)
+
+          add_library(hello SHARED hello.cpp)
+          EOF
+
+          cat > smoke-test/hello.cpp <<'EOF'
+          extern "C" int hello() {
+            return 42;
+          }
+          EOF
+
+      - name: Configure test project
+        shell: bash
+        run: |
+          cmake -S smoke-test -B smoke-test/build \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM=android-23
+
+      - name: Build test project
+        shell: bash
+        run: |
+          cmake --build smoke-test/build --verbose
+
+      - name: Verify output
+        shell: bash
+        run: |
+          find smoke-test/build -type f | sort
+          find smoke-test/build -name 'libhello.so' | grep .
