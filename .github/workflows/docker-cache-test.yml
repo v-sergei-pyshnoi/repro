@@ -1,0 +1,316 @@
+name: buildx-local-cache-smoke-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  attempt-1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore buildx cache
+        id: cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-1
+          restore-keys: |
+            buildx-${{ github.run_id }}-
+
+      - name: Inspect cache before build
+        shell: bash
+        run: |
+          echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
+          mkdir -p /tmp/.buildx-cache
+          echo "=== cache before build ==="
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Prepare Dockerfile
+        shell: bash
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN echo "layer-1" > /marker-1.txt
+          EOF
+
+      - name: Build image using local cache
+        shell: bash
+        run: |
+          docker buildx build \
+            --progress=plain \
+            --tag buildx-cache-test:attempt-1 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            .
+
+      - name: Finalize cache after build
+        shell: bash
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          echo "=== cache after build ==="
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Save buildx cache
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-1
+
+  attempt-2:
+    runs-on: ubuntu-latest
+    needs: attempt-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore buildx cache
+        id: cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-2
+          restore-keys: |
+            buildx-${{ github.run_id }}-
+
+      - name: Inspect cache before build
+        shell: bash
+        run: |
+          echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
+          test -d /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Prepare Dockerfile
+        shell: bash
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN echo "layer-1" > /marker-1.txt
+          RUN echo "layer-2" > /marker-2.txt
+          EOF
+
+      - name: Build image using local cache
+        shell: bash
+        run: |
+          docker buildx build \
+            --progress=plain \
+            --tag buildx-cache-test:attempt-2 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            .
+
+      - name: Finalize cache after build
+        shell: bash
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Save buildx cache
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-2
+
+  attempt-3:
+    runs-on: ubuntu-latest
+    needs: attempt-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore buildx cache
+        id: cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-3
+          restore-keys: |
+            buildx-${{ github.run_id }}-
+
+      - name: Inspect cache before build
+        shell: bash
+        run: |
+          echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
+          test -d /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Prepare Dockerfile
+        shell: bash
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN echo "layer-1" > /marker-1.txt
+          RUN echo "layer-2" > /marker-2.txt
+          RUN echo "layer-3" > /marker-3.txt
+          EOF
+
+      - name: Build image using local cache
+        shell: bash
+        run: |
+          docker buildx build \
+            --progress=plain \
+            --tag buildx-cache-test:attempt-3 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            .
+
+      - name: Finalize cache after build
+        shell: bash
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Save buildx cache
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-3
+
+  attempt-4:
+    runs-on: ubuntu-latest
+    needs: attempt-3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore buildx cache
+        id: cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-4
+          restore-keys: |
+            buildx-${{ github.run_id }}-
+
+      - name: Inspect cache before build
+        shell: bash
+        run: |
+          echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
+          test -d /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Prepare Dockerfile
+        shell: bash
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN echo "layer-1" > /marker-1.txt
+          RUN echo "layer-2" > /marker-2.txt
+          RUN echo "layer-3" > /marker-3.txt
+          RUN echo "layer-4" > /marker-4.txt
+          EOF
+
+      - name: Build image using local cache
+        shell: bash
+        run: |
+          docker buildx build \
+            --progress=plain \
+            --tag buildx-cache-test:attempt-4 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            .
+
+      - name: Finalize cache after build
+        shell: bash
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Save buildx cache
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-4
+
+  attempt-5:
+    runs-on: ubuntu-latest
+    needs: attempt-4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore buildx cache
+        id: cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-5
+          restore-keys: |
+            buildx-${{ github.run_id }}-
+
+      - name: Inspect cache before build
+        shell: bash
+        run: |
+          echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
+          test -d /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Prepare Dockerfile
+        shell: bash
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM ubuntu:24.04
+          RUN apt-get update && apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN echo "layer-1" > /marker-1.txt
+          RUN echo "layer-2" > /marker-2.txt
+          RUN echo "layer-3" > /marker-3.txt
+          RUN echo "layer-4" > /marker-4.txt
+          RUN echo "layer-5" > /marker-5.txt
+          EOF
+
+      - name: Build image using local cache
+        shell: bash
+        run: |
+          docker buildx build \
+            --progress=plain \
+            --tag buildx-cache-test:attempt-5 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            .
+
+      - name: Finalize cache after build
+        shell: bash
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          du -sh /tmp/.buildx-cache || true
+          find /tmp/.buildx-cache -maxdepth 2 | sort || true
+
+      - name: Save buildx cache
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ github.run_id }}-attempt-5
