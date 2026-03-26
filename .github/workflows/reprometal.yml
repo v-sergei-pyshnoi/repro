@@ -38,8 +38,6 @@ jobs:
               data[id] = 1.0;
           }
           EOF
-      - name: "Run xcodebuild -downloadComponent MetalToolchain"
-        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Check metal tool
         run: |
