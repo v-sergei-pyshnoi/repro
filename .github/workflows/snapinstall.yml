@@ -1,0 +1,12 @@
+name: Reproducer for snapd issue in latest ubuntu image
+on:
+  
+  workflow_dispatch:
+
+jobs:
+  snap-reproducer:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          # This should happen in seconds
+          time sudo snap install --color=never --unicode=never hello-world
