@@ -1,12 +1,20 @@
-name: Reproducer for snapd issue in latest ubuntu image
 on:
-  
   workflow_dispatch:
 
 jobs:
   snap-reproducer:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+        run_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    name: ${{ matrix.os }} / run-${{ matrix.run_id }}
+
     steps:
-      - run: |
-          # This should happen in seconds
+      - name: Reproduce snap install issue
+        run: |
+          echo "OS: ${{ matrix.os }}"
+          echo "Run: ${{ matrix.run_id }}"
           time sudo snap install --color=never --unicode=never hello-world
