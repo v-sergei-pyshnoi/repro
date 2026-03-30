@@ -20,5 +20,5 @@ jobs:
       - name: Install non-cacheable dependencies
         run: |
           echo -- Installing nasm to build FFmpeg
-          brew update && brew upgrade ruby@3.3
+          brew update && brew upgrade ruby@3.3 --skip-link
           brew install nasm
