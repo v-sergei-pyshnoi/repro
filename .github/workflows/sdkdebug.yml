@@ -8,14 +8,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Show installed SDK packages
         run: |
           sdkmanager --list
 
-      - name: Show SDK platforms directory
-        run: |
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls -la "$ANDROID_SDK_ROOT/platforms" || true
