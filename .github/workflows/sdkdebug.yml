@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
       - name: Show installed SDK packages
         run: |
           sdkmanager --list
