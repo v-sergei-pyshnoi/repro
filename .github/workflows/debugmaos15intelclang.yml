@@ -5,24 +5,13 @@ on:
 
 jobs:
   repro:
-    runs-on: macos-14
+    strategy:
+      matrix:
+        os: [macos-14, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Create repro source
-        shell: bash
-        run: |
-          cat > test.cpp <<'EOF'
-          #include <iostream>
-          #include <future>
 
-          int main() {
-              std::promise<int> p;
-              p.set_value(42);
-              std::cout << p.get_future().get() << std::endl;
-              return 0;
-          }
-          EOF
-
-      - name: Step 1 - show clang versions
+      - name: show clang versions
         shell: bash
         run: |
           echo "which clang:   $(which clang)"
@@ -31,53 +20,5 @@ jobs:
           clang --version
           echo
           clang++ --version
-          echo
-          echo "xcrun clang:   $(xcrun --find clang)"
-          echo "xcrun clang++: $(xcrun --find clang++)"
 
-      - name: Step 2 - reproduce error
-        shell: bash
-        continue-on-error: true
-        run: |
-          clang++ -v test.cpp -std=c++17 -o test
-
-      - name: Step 3 - apply workaround
-        shell: bash
-        run: |
-          mkdir -p "$HOME/bin"
-
-          cat > "$HOME/bin/clang" <<'EOF'
-          #!/bin/bash
-          exec "$(xcrun --find clang)" "$@"
-          EOF
-
-          cat > "$HOME/bin/clang++" <<'EOF'
-          #!/bin/bash
-          exec "$(xcrun --find clang++)" "$@"
-          EOF
-
-          chmod +x "$HOME/bin/clang" "$HOME/bin/clang++"
-
-          echo "PATH=$HOME/bin:$PATH" >> "$GITHUB_ENV"
-          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-
-      - name: Step 4 - show clang versions again
-        shell: bash
-        run: |
-          echo "which clang:   $(which clang)"
-          echo "which clang++: $(which clang++)"
-          echo
-          clang --version
-          echo
-          clang++ --version
-          echo
-          echo "xcrun clang:   $(xcrun --find clang)"
-          echo "xcrun clang++: $(xcrun --find clang++)"
-          echo
-          echo "SDKROOT=$SDKROOT"
-
-      - name: Step 5 - retry same command after workaround
-        shell: bash
-        run: |
-          clang++ -v test.cpp -std=c++17 -o test
-          ./test
+   
