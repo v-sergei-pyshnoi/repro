@@ -23,7 +23,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build
 
       - name: Setup NDK
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@v1.5.0
         id: setup-ndk
         with:
           ndk-version: r27
