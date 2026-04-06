@@ -1,14 +1,55 @@
-name: Repro broken node 22.22.2
-on: workflow_dispatch
+name: Repro npm self-upgrade failure
+on:
+  workflow_dispatch:
+
 jobs:
-  test:
+  repro:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/setup-node@v6
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - run: |
+
+      - name: Show versions and files (host)
+        run: |
+          echo "=== HOST / setup-node ==="
           echo "Node: $(node --version)"
           echo "npm: $(npm --version)"
-          ls -la "$(npm prefix -g)/lib/node_modules/npm/node_modules/promise-retry/" || echo "MISSING"
-      - run: npm install -g npm@latest
+          BASE="$(npm prefix -g)/lib/node_modules/npm/node_modules/promise-retry"
+          echo "BASE=$BASE"
+          ls -la "$BASE" || echo "MISSING"
+          cat "$BASE/package.json" || true
+
+      - name: Repro on host
+        id: host_repro
+        continue-on-error: true
+        run: |
+          npm install -g npm@latest
+
+      - name: Show host result
+        run: |
+          echo "Host repro outcome: ${{ steps.host_repro.outcome }}"
+          echo "Host repro conclusion: ${{ steps.host_repro.conclusion }}"
+
+      - name: Repro inside docker run
+        id: docker_repro
+        continue-on-error: true
+        run: |
+          docker run --rm node:22 bash -lc '
+            set -e
+            echo "=== DOCKER / node:22 ==="
+            echo "Node: $(node --version)"
+            echo "npm: $(npm --version)"
+            BASE="$(npm prefix -g)/lib/node_modules/npm/node_modules/promise-retry"
+            echo "BASE=$BASE"
+            ls -la "$BASE" || echo "MISSING"
+            cat "$BASE/package.json" || true
+            npm install -g npm@latest
+          '
+
+      - name: Show docker result
+        run: |
+          echo "Docker repro outcome: ${{ steps.docker_repro.outcome }}"
+          echo "Docker repro conclusion: ${{ steps.docker_repro.conclusion }}"
