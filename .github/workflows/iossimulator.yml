@@ -23,7 +23,7 @@ jobs:
             sudo xcodes select 26.1.1
             echo "Selected xcode version: $(xcodes list | grep "Selected")"
             sudo xcodes runtimes install 'iOS 26.1'
-            xcrun simctl create 'Test simulator iPhone 17 (26.1' 'iPhone 17' 'iOS26.1')
+            xcrun simctl create 'Test simulator iPhone 17 (26.1' 'iPhone 17' 'iOS26.1'
       - name: xcrun simctl list devices
         run: xcrun simctl list devices
 
