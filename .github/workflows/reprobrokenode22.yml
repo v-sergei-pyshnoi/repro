@@ -1,0 +1,14 @@
+name: Repro broken node 22.22.2
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - run: |
+          echo "Node: $(node --version)"
+          echo "npm: $(npm --version)"
+          ls -la "$(npm prefix -g)/lib/node_modules/npm/node_modules/promise-retry/" || echo "MISSING"
+      - run: npm install -g npm@latest
