@@ -5,12 +5,15 @@ on:
 jobs:
   repro:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ["22.22.2", "22.22.1"]
 
     steps:
       - name: Setup Node 22
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
 
       - name: Show versions and files (host)
         run: |
@@ -37,7 +40,7 @@ jobs:
         id: docker_repro
         continue-on-error: true
         run: |
-          docker run --rm node:22 bash -lc '
+          docker run --rm node:${{ matrix.node }} bash -lc '
             set -e
             echo "=== DOCKER / node:22 ==="
             echo "Node: $(node --version)"
