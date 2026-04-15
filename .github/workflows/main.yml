@@ -1,0 +1,241 @@
+name: Generated Metal repro plain vs CodeQL
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+
+jobs:
+  plain-build:
+    name: Plain xcodebuild
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew install xcodegen
+
+      - name: Generate minimal project
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mkdir -p ReproMetal/Sources/ReproMetal
+
+          cat > ReproMetal/project.yml <<'YAML'
+          name: ReproMetal
+          options:
+            deploymentTarget:
+              iOS: "18.0"
+
+          targets:
+            ReproMetal:
+              type: application
+              platform: iOS
+              sources:
+                - path: Sources/ReproMetal
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.example.ReproMetal
+                  SWIFT_VERSION: 5.0
+                  INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+                  INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+                  INFOPLIST_KEY_UILaunchScreen_Generation: YES
+                  INFOPLIST_KEY_CFBundleDisplayName: ReproMetal
+                  INFOPLIST_KEY_LSRequiresIPhoneOS: YES
+                  INFOPLIST_KEY_UIRequiresFullScreen: NO
+                  INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+                  CODE_SIGNING_ALLOWED: NO
+          YAML
+
+          cat > ReproMetal/Sources/ReproMetal/ReproMetalApp.swift <<'SWIFT'
+          import SwiftUI
+
+          @main
+          struct ReproMetalApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      ContentView()
+                  }
+              }
+          }
+          SWIFT
+
+          cat > ReproMetal/Sources/ReproMetal/ContentView.swift <<'SWIFT'
+          import SwiftUI
+
+          struct ContentView: View {
+              var body: some View {
+                  Text("Metal Repro")
+                      .padding()
+              }
+          }
+          SWIFT
+
+          cat > ReproMetal/Sources/ReproMetal/Shaders.metal <<'METAL'
+          #include <metal_stdlib>
+          using namespace metal;
+
+          kernel void noop(device float *buffer [[buffer(0)]],
+                           uint id [[thread_position_in_grid]]) {
+              buffer[id] = buffer[id];
+          }
+          METAL
+
+          cd ReproMetal
+          xcodegen generate
+
+      - name: Plain build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+
+          cd ReproMetal
+
+          xcodebuild -version
+          xcrun -f metal
+          xcrun metal -v
+
+          xcodebuild \
+            -project ReproMetal.xcodeproj \
+            -scheme ReproMetal \
+            -destination 'generic/platform=iOS' \
+            build \
+            CODE_SIGN_IDENTITY='' \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+  codeql-build:
+    name: CodeQL xcodebuild
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew install xcodegen
+
+      - name: Generate minimal project
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mkdir -p ReproMetal/Sources/ReproMetal
+
+          cat > ReproMetal/project.yml <<'YAML'
+          name: ReproMetal
+          options:
+            deploymentTarget:
+              iOS: "18.0"
+
+          targets:
+            ReproMetal:
+              type: application
+              platform: iOS
+              sources:
+                - path: Sources/ReproMetal
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.example.ReproMetal
+                  SWIFT_VERSION: 5.0
+                  INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+                  INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+                  INFOPLIST_KEY_UILaunchScreen_Generation: YES
+                  INFOPLIST_KEY_CFBundleDisplayName: ReproMetal
+                  INFOPLIST_KEY_LSRequiresIPhoneOS: YES
+                  INFOPLIST_KEY_UIRequiresFullScreen: NO
+                  INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+                  CODE_SIGNING_ALLOWED: NO
+          YAML
+
+          cat > ReproMetal/Sources/ReproMetal/ReproMetalApp.swift <<'SWIFT'
+          import SwiftUI
+
+          @main
+          struct ReproMetalApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      ContentView()
+                  }
+              }
+          }
+          SWIFT
+
+          cat > ReproMetal/Sources/ReproMetal/ContentView.swift <<'SWIFT'
+          import SwiftUI
+
+          struct ContentView: View {
+              var body: some View {
+                  Text("Metal Repro")
+                      .padding()
+              }
+          }
+          SWIFT
+
+          cat > ReproMetal/Sources/ReproMetal/Shaders.metal <<'METAL'
+          #include <metal_stdlib>
+          using namespace metal;
+
+          kernel void noop(device float *buffer [[buffer(0)]],
+                           uint id [[thread_position_in_grid]]) {
+              buffer[id] = buffer[id];
+          }
+          METAL
+
+          cd ReproMetal
+          xcodegen generate
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+
+      - name: CodeQL build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+
+          cd ReproMetal
+
+          xcodebuild -version
+          xcrun -f metal
+          xcrun metal -v
+          env | sort | grep -E 'CODEQL|DYLD|SEMMLE|DEVELOPER_DIR|MD_APPLE' || true
+
+          xcodebuild \
+            -project ReproMetal.xcodeproj \
+            -scheme ReproMetal \
+            -destination 'generic/platform=iOS' \
+            build \
+            CODE_SIGN_IDENTITY='' \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Analyze
+        if: always()
+        uses: github/codeql-action/analyze@v4
