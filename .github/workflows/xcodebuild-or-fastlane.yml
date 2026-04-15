@@ -249,7 +249,12 @@ jobs:
         with:
           xcode-version: ${{ inputs.xcodeversion }}
       - name: install metall
-        run: xcodebuild -downloadComponent MetalToolchain
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          echo "=== after download ==="
+          xcodebuild -version
+          xcrun -f metal
+          xcrun metal -v
       - name: Check environment
         run: |
             xcodebuild -version
