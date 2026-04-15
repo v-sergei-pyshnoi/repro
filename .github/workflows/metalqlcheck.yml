@@ -1,0 +1,43 @@
+name: check metal after codeql init
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+
+jobs:
+ 
+
+  codeql-build:
+    name: CodeQL xcodebuild
+    runs-on: macos-26
+
+    steps:
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: check metal
+        shell: bash
+        run: |
+          xcodebuild -version
+          xcrun -f metal
+          xcrun metal -v
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+
+      - name: check metal
+        shell: bash
+        run: |
+          xcodebuild -version
+          xcrun -f metal
+          xcrun metal -v
