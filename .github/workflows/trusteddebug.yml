@@ -4,8 +4,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  repro:
+  repro_win_22:
     runs-on: windows-2022
+    timeout-minutes: 10
+
+    steps:
+      - name: Install Microsoft Trusted Signing Client Tools
+        shell: pwsh
+        run: |
+          Write-Host "Installing Microsoft Trusted Signing Client Tools..."
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6d9cb638-4d5f-438d-9f21-23f0f4405944/TrustedSigningClientTools.msi" -OutFile .\TrustedSigningClientTools.msi
+          Start-Process msiexec.exe -Wait -ArgumentList '/I TrustedSigningClientTools.msi /quiet'
+          Remove-Item .\TrustedSigningClientTools.msi
+          Write-Host "Microsoft Trusted Signing Client Tools installed successfully"
+  repro_win_25:
+    runs-on: windows-2025
     timeout-minutes: 10
 
     steps:
