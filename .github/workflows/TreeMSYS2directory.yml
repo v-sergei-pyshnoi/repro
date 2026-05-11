@@ -9,17 +9,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
 
       - name: show version
         shell: pwsh
-        run: make.exe --version
-
-      - name: Change env
-        shell: pwsh
-        run: $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
-        
-          
-      - name: show version
-        shell: pwsh
-        run: make.exe --version
+        run: | 
+          make.exe --version
+          $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
+          make.exe --version
