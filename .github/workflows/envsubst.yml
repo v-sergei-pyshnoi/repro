@@ -1,0 +1,21 @@
+name: Install envsubst on Ubuntu
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install-envsubst:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install envsubst
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext-base
+
+      - name: Check envsubst
+        shell: bash
+        run: |
+          which envsubst
+          envsubst --version
