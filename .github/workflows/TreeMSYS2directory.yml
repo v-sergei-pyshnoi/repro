@@ -1,0 +1,14 @@
+name: Tree MSYS2 directory
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tree-msys2:
+    runs-on: windows-latest
+
+    steps:
+      - name: Show C:\msys64 as tree
+        shell: cmd
+        run: |
+          tree C:\msys64 /F /A
