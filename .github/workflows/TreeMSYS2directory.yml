@@ -11,119 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show make via direct bash call
+      - name: show version
         shell: pwsh
-        run: |
-          Write-Host "=== PowerShell context ==="
-          Write-Host "Runner OS: $env:RUNNER_OS"
-          Write-Host "Image OS: $env:ImageOS"
-          Write-Host "Image Version: $env:ImageVersion"
-          Write-Host
+        run: make.exe --version
 
-          Write-Host "=== PowerShell make resolution ==="
-          Get-Command make -All -ErrorAction SilentlyContinue | Format-List *
-          Write-Host
-
-          Write-Host "=== MSYS2 path check ==="
-          if (Test-Path "C:\msys64\usr\bin\bash.exe") {
-            Write-Host "Found C:\msys64\usr\bin\bash.exe"
-          } else {
-            Write-Error "C:\msys64\usr\bin\bash.exe not found"
-            exit 1
-          }
-
-          if (Test-Path "C:\msys64\usr\bin\make.exe") {
-            Write-Host "Found C:\msys64\usr\bin\make.exe"
-          } else {
-            Write-Error "C:\msys64\usr\bin\make.exe not found"
-            exit 1
-          }
-
-          Write-Host
-          Write-Host "=== Direct MSYS2 bash call ==="
-
-          C:\msys64\usr\bin\bash.exe -lc @'
-            set -x
-
-            echo "MSYSTEM=${MSYSTEM:-<empty>}"
-            echo "SHELL=$SHELL"
-            echo "PATH=$PATH"
-            echo
-
-            echo "=== bash version ==="
-            bash --version || true
-            echo
-
-            echo "=== make resolution ==="
-            type -a make || true
-            command -v make || true
-            which make || true
-            echo
-
-            echo "=== make version ==="
-            make --version || true
-            echo
-
-            echo "=== physical make files ==="
-            ls -la /usr/bin/make.exe || true
-            ls -la /mingw64/bin/mingw32-make.exe || true
-            ls -la /ucrt64/bin/mingw32-make.exe || true
-          '@
-
-  setup-msys2-call:
-    name: setup-msys2 shell call
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MSYS
-          path-type: minimal
-          update: true
-          install: >-
-            make
-            which
-
-      - name: Show make via setup-msys2 shell
-        shell: msys2 {0}
-        run: |
-          set -x
-
-          echo "=== GitHub runner image ==="
-          echo "RUNNER_OS=$RUNNER_OS"
-          echo "ImageOS=$ImageOS"
-          echo "ImageVersion=$ImageVersion"
-          echo
-
-          echo "=== MSYS2 environment ==="
-          echo "MSYSTEM=$MSYSTEM"
-          echo "SHELL=$SHELL"
-          echo "PATH=$PATH"
-          echo
-
-          echo "=== bash version ==="
-          bash --version || true
-          echo
-
-          echo "=== make resolution ==="
-          type -a make || true
-          command -v make || true
-          which make || true
-          echo
-
-          echo "=== make version ==="
-          make --version || true
-          echo
-
-          echo "=== pacman package info ==="
-          pacman -Q make || true
-          pacman -Qi make || true
-          echo
-
-          echo "=== physical make files ==="
-          ls -la /usr/bin/make.exe || true
-          ls -la /mingw64/bin/mingw32-make.exe || true
-          ls -la /ucrt64/bin/mingw32-make.exe || true
+      - name: Change env
+        shell: pwsh
+        run: $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
+        
+          
+      - name: show version
+        shell: pwsh
+        run: make.exe --version
