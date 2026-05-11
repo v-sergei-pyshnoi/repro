@@ -10,9 +10,17 @@ jobs:
 
     steps:
 
-      - name: show version
-        shell: pwsh
-        run: | 
-          make.exe --version
-          $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
-          make.exe --version
+    - name: show version
+      shell: pwsh
+      run: |
+        Write-Host "=== Before PATH change ==="
+        Get-Command make.exe -All -ErrorAction SilentlyContinue | Select-Object Source
+        make.exe --version
+
+        $env:PATH = "C:\msys64\usr\bin;$env:PATH"
+
+        Write-Host "`n=== After PATH change ==="
+        Get-Command make.exe -All | Select-Object Source
+        make.exe --version
+        Write-Host "`n=== Explicit call ==="
+        C:\msys64\usr\bin\make.exe --version
