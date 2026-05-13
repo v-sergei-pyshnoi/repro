@@ -1,0 +1,178 @@
+name: Check Clang LLVM across Xcode versions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-clang:
+    name: Check clang LLVM with Xcode ${{ matrix.xcode.version }}
+    runs-on: macos-26
+
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode:
+          - version: "default"
+            path: ""
+          - version: "26.4.1"
+            path: "/Applications/Xcode_26.4.1.app"
+          - version: "26.4"
+            path: "/Applications/Xcode_26.4.app"
+          - version: "26.3"
+            path: "/Applications/Xcode_26.3.app"
+          - version: "26.3.0"
+            path: "/Applications/Xcode_26.3.0.app"
+          - version: "26.2"
+            path: "/Applications/Xcode_26.2.app"
+          - version: "26.2.0"
+            path: "/Applications/Xcode_26.2.0.app"
+          - version: "26.1.1"
+            path: "/Applications/Xcode_26.1.1.app"
+          - version: "26.1"
+            path: "/Applications/Xcode_26.1.app"
+          - version: "26.0.1"
+            path: "/Applications/Xcode_26.0.1.app"
+
+    steps:
+      - name: Print runner image info
+        shell: bash
+        run: |
+          echo "ImageOS: ${ImageOS:-}"
+          echo "ImageVersion: ${ImageVersion:-}"
+          echo "ImageVersionOverride: ${ImageVersionOverride:-}"
+          echo
+          sw_vers
+          echo
+          uname -a
+
+      - name: List installed Xcode applications
+        shell: bash
+        run: |
+          ls -la /Applications | grep -E '^d.*Xcode' || true
+          echo
+          find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print | sort
+
+      - name: Check initial clang before changing Xcode
+        shell: bash
+        run: |
+          echo "===== Initial xcode-select ====="
+          xcode-select -p || true
+
+          echo
+          echo "===== Initial xcodebuild version ====="
+          xcodebuild -version || true
+
+          echo
+          echo "===== Initial clang path ====="
+          which clang || true
+          command -v clang || true
+          xcrun --find clang || true
+
+          echo
+          echo "===== Initial clang version ====="
+          clang --version || true
+
+          echo
+          echo "===== Initial xcrun clang version ====="
+          xcrun clang --version || true
+
+          echo
+          echo "===== Initial LLVM / Apple clang details ====="
+          /usr/bin/clang --version || true
+
+      - name: Select Xcode ${{ matrix.xcode.version }}
+        if: matrix.xcode.path != ''
+        shell: bash
+        run: |
+          XCODE_PATH="${{ matrix.xcode.path }}"
+
+          if [ ! -d "$XCODE_PATH" ]; then
+            echo "::error::Xcode path does not exist: $XCODE_PATH"
+            exit 1
+          fi
+
+          echo "Selecting Xcode: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+
+          echo
+          echo "Selected developer directory:"
+          xcode-select -p
+
+      - name: Keep default Xcode
+        if: matrix.xcode.path == ''
+        shell: bash
+        run: |
+          echo "Keeping default Xcode selected by the image."
+          echo
+          xcode-select -p
+          xcodebuild -version
+
+      - name: Check clang after selecting Xcode
+        shell: bash
+        run: |
+          echo "===== Selected Xcode ====="
+          xcode-select -p
+
+          echo
+          echo "===== xcodebuild version ====="
+          xcodebuild -version
+
+          echo
+          echo "===== clang paths ====="
+          echo "which clang:"
+          which clang || true
+
+          echo
+          echo "command -v clang:"
+          command -v clang || true
+
+          echo
+          echo "xcrun --find clang:"
+          xcrun --find clang || true
+
+          echo
+          echo "xcrun --find clang++:"
+          xcrun --find clang++ || true
+
+          echo
+          echo "===== clang --version ====="
+          clang --version || true
+
+          echo
+          echo "===== clang++ --version ====="
+          clang++ --version || true
+
+          echo
+          echo "===== xcrun clang --version ====="
+          xcrun clang --version || true
+
+          echo
+          echo "===== xcrun clang++ --version ====="
+          xcrun clang++ --version || true
+
+          echo
+          echo "===== /usr/bin/clang --version ====="
+          /usr/bin/clang --version || true
+
+          echo
+          echo "===== /usr/bin/clang++ --version ====="
+          /usr/bin/clang++ --version || true
+
+      - name: Check LLVM-related tools
+        shell: bash
+        run: |
+          echo "===== Tool paths ====="
+          for tool in clang clang++ llvm-ar llvm-nm llvm-objdump llvm-ranlib ld ar nm; do
+            echo
+            echo "--- $tool ---"
+            which "$tool" || true
+            xcrun --find "$tool" || true
+          done
+
+          echo
+          echo "===== Tool versions ====="
+          for tool in clang clang++ llvm-ar llvm-nm llvm-objdump llvm-ranlib ld ar nm; do
+            echo
+            echo "--- $tool --version ---"
+            "$tool" --version || true
+          done
