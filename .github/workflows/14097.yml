@@ -49,6 +49,10 @@ jobs:
           command -v cargo || true
           command -v rustc || true
 
+          which rustup || true
+          which cargo || true
+          which rustc || true
+
           ls -la "$(command -v rustup)" || true
           ls -la "$(command -v cargo)" || true
           ls -la "$(command -v rustc)" || true
@@ -73,17 +77,27 @@ jobs:
         run: |
           set -x
 
-          /opt/homebrew/bin/rustup update --no-self-update stable
-          /opt/homebrew/bin/rustup override set stable
+          echo "=== Resolved rustup before repro A ==="
+          command -v rustup
+          which rustup
+          rustup --version
+
+          rustup update --no-self-update stable
+          rustup override set stable
 
           # This is the reported failing path:
           # Error: unexpected argument '+stable' found
-          /opt/homebrew/bin/rustup component add llvm-tools-preview
+          rustup component add llvm-tools-preview
 
       - name: Repro B - cargo metadata
         shell: bash
         run: |
           set -x
+
+          echo "=== Resolved cargo before repro B ==="
+          command -v cargo
+          which cargo
+          cargo --version
 
           mkdir -p repro-rust/chasquimq-node/src
           mkdir -p repro-rust/chasquimq/src
