@@ -10,8 +10,51 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Create minimal Cargo project
+        shell: bash
+        run: |
+          set -x
+
+          cat > Cargo.toml <<'EOF'
+          [package]
+          name = "rust-toolchain-macos15-repro"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          EOF
+
+          mkdir -p src
+
+          cat > src/lib.rs <<'EOF'
+          pub fn add(left: u64, right: u64) -> u64 {
+              left + right
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+
+              #[test]
+              fn it_works() {
+                  assert_eq!(add(2, 2), 4);
+              }
+          }
+          EOF
+
+          cat > src/main.rs <<'EOF'
+          fn main() {
+              println!("hello from rust-toolchain-macos15-repro");
+          }
+          EOF
+
+          cargo generate-lockfile
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
+
       - uses: Swatinem/rust-cache@v2
+
       - run: cargo build --locked --all-targets
