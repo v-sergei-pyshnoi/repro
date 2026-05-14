@@ -1,28 +1,21 @@
-name: Check brew rustup-init formula version
+name: Repro cargo llvm-cov nextest on macos-15
 
 on:
   workflow_dispatch:
 
 jobs:
-  check-rustup-init:
-    name: Check rustup-init formula #${{ matrix.run }}
-    strategy:
-      fail-fast: false
-      matrix:
-        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
+  repro:
+    name: macos-15 cargo llvm-cov nextest
     runs-on: macos-15
 
     steps:
-      - name: Print image info
+      - name: Print runner/image info
         shell: bash
         run: |
           set -x
 
-          echo "Run number: ${{ matrix.run }}"
           echo "Runner OS: ${{ runner.os }}"
           echo "Runner arch: ${{ runner.arch }}"
-
           echo "ImageOS=${ImageOS:-}"
           echo "ImageVersion=${ImageVersion:-}"
 
@@ -30,33 +23,107 @@ jobs:
           uname -a
           arch
 
-          echo "=== Runner image metadata ==="
-          cat /imagegeneration/imagedata.json 2>/dev/null || true
-          cat /usr/local/share/runner-images/image-info.json 2>/dev/null || true
-
-      - name: Print Homebrew rustup-init formula version
+      - name: Print initial Rust/Homebrew info
         shell: bash
         run: |
           set -x
 
-          echo "=== Homebrew info ==="
-          brew --version
-          brew --prefix
-
-          echo "=== rustup-init formula versions ==="
-          brew list --versions rustup-init || true
-          brew info rustup-init || true
-
-          echo "=== rustup formula versions, if installed ==="
-          brew list --versions rustup || true
-          brew info rustup || true
-
-          echo "=== Binary paths ==="
+          echo "=== Rust tools ==="
           command -v rustup || true
           command -v rustup-init || true
+          command -v cargo || true
+          command -v rustc || true
 
-          ls -la /opt/homebrew/bin/rustup* 2>/dev/null || true
-          ls -la /usr/local/bin/rustup* 2>/dev/null || true
-
-          echo "=== Rustup version ==="
           rustup --version || true
+          rustup show || true
+          cargo --version || true
+          rustc --version -v || true
+
+          echo "=== Homebrew rustup ==="
+          brew --version || true
+          brew list --versions rustup-init || true
+          brew list --versions rustup || true
+          brew info rustup-init || true
+
+          echo "=== Rustup files ==="
+          ls -la /opt/homebrew/bin/rustup* 2>/dev/null || true
+          find /opt/homebrew/Cellar/rustup/1.29.0 -maxdepth 4 -type f | sort || true
+
+      - name: Create minimal Rust project
+        shell: bash
+        run: |
+          set -x
+
+          cargo new repro-project
+          cd repro-project
+
+          cat > src/lib.rs <<'EOF'
+          pub fn add(left: u64, right: u64) -> u64 {
+              left + right
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+
+              #[test]
+              fn it_works() {
+                  assert_eq!(add(2, 2), 4);
+              }
+          }
+          EOF
+
+          cat > src/main.rs <<'EOF'
+          fn main() {
+              println!("hello");
+          }
+          EOF
+
+          cargo metadata --format-version 1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+        with:
+          tool: cargo-nextest@0.9.128
+
+      - name: Print Rust tools after actions
+        if: always()
+        shell: bash
+        run: |
+          set -x
+
+          command -v rustup || true
+          command -v rustup-init || true
+          command -v cargo || true
+          command -v cargo-llvm-cov || true
+          command -v cargo-nextest || true
+
+          rustup --version || true
+          rustup show || true
+          cargo --version || true
+          rustc --version -v || true
+          cargo llvm-cov --version || true
+          cargo nextest --version || true
+
+      - name: Run cargo llvm-cov nextest
+        working-directory: repro-project
+        shell: bash
+        run: >
+          cargo llvm-cov nextest
+          --all-features
+          --lcov --output-path lcov.info --nocapture
+          --remap-path-prefix
+
+      - name: Print result
+        if: always()
+        shell: bash
+        run: |
+          set -x
+
+          ls -la repro-project || true
+          ls -la repro-project/lcov.info || true
