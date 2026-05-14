@@ -163,6 +163,6 @@ jobs:
 
           # This is the second reported failing path:
           # error: unexpected argument 'metadata' found
-          /opt/homebrew/bin/cargo metadata \
+          cargo metadata \
             --format-version 1 \
             --manifest-path "$(pwd)/chasquimq-node/Cargo.toml"
