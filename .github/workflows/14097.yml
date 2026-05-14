@@ -1,4 +1,4 @@
-name: Rustup macOS 15 repro
+name: Rustup macOS 15 action repro
 
 on:
   workflow_dispatch:
@@ -72,32 +72,10 @@ jobs:
           ls -la /opt/homebrew/bin/rustup /usr/local/bin/rustup 2>/dev/null || true
           ls -la /opt/homebrew/Cellar/rustup* /usr/local/Cellar/rustup* 2>/dev/null || true
 
-      - name: Repro A - rustup component add llvm-tools-preview
+      - name: Prepare minimal Rust workspace
         shell: bash
         run: |
           set -x
-
-          echo "=== Resolved rustup before repro A ==="
-          command -v rustup
-          which rustup
-          rustup --version
-
-          rustup update --no-self-update stable
-          rustup override set stable
-
-          # This is the reported failing path:
-          # Error: unexpected argument '+stable' found
-          rustup component add llvm-tools-preview
-
-      - name: Repro B - cargo metadata
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== Resolved cargo before repro B ==="
-          command -v cargo
-          which cargo
-          cargo --version
 
           mkdir -p repro-rust/chasquimq-node/src
           mkdir -p repro-rust/chasquimq/src
@@ -175,8 +153,119 @@ jobs:
           pub fn placeholder() {}
           EOF
 
-          # This is the second reported failing path:
-          # error: unexpected argument 'metadata' found
+      - name: Direct repro A - rustup component add llvm-tools-preview
+        id: direct_rustup
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -x
+
+          echo "=== Resolved rustup before direct repro ==="
+          command -v rustup
+          which rustup
+          rustup --version
+
+          rustup update --no-self-update stable
+          rustup override set stable
+
+          rustup component add llvm-tools-preview
+
+      - name: Direct repro B - cargo metadata
+        id: direct_cargo_metadata
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -x
+
+          echo "=== Resolved cargo before direct repro ==="
+          command -v cargo
+          which cargo
+          cargo --version
+
           cargo metadata \
             --format-version 1 \
-            --manifest-path "$(pwd)/chasquimq-node/Cargo.toml"
+            --manifest-path "$GITHUB_WORKSPACE/repro-rust/chasquimq-node/Cargo.toml"
+
+      - name: Action repro A - PyO3 maturin-action
+        id: maturin_action
+        continue-on-error: true
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --manifest-path repro-rust/chasquimq-node/Cargo.toml --release
+          target: ${{ runner.arch == 'ARM64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
+
+      - name: Print diagnostics after maturin-action
+        if: always()
+        shell: bash
+        run: |
+          set -x
+
+          echo "=== After maturin-action ==="
+          command -v rustup || true
+          command -v cargo || true
+          command -v rustc || true
+
+          which rustup || true
+          which cargo || true
+          which rustc || true
+
+          rustup --version || true
+          rustup show || true
+          cargo --version || true
+          rustc --version -v || true
+
+          env | sort
+
+      - name: Install Node.js
+        if: always()
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Action-like repro B - napi-rs CLI calls cargo metadata
+        id: napi_cli
+        continue-on-error: true
+        shell: bash
+        working-directory: repro-rust/chasquimq-node
+        run: |
+          set -x
+
+          echo "=== Resolved cargo before napi-rs repro ==="
+          command -v cargo
+          which cargo
+          cargo --version
+
+          echo "=== Resolved node/npm/npx ==="
+          command -v node
+          command -v npm
+          command -v npx
+          node --version
+          npm --version
+
+          # This path is closer to the real @napi-rs failure:
+          # napi-rs CLI shells out to cargo metadata.
+          npx --yes @napi-rs/cli --version
+
+          # Try a command that forces napi-rs to inspect Cargo.toml.
+          npx --yes @napi-rs/cli build \
+            --platform \
+            --release \
+            --manifest-path "$GITHUB_WORKSPACE/repro-rust/chasquimq-node/Cargo.toml"
+
+      - name: Final repro summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## Repro summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Direct rustup component add | ${{ steps.direct_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Direct cargo metadata | ${{ steps.direct_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| PyO3/maturin-action | ${{ steps.maturin_action.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| @napi-rs/cli build | ${{ steps.napi_cli.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "ImageOS: ${ImageOS:-}" >> "$GITHUB_STEP_SUMMARY"
+          echo "ImageVersion: ${ImageVersion:-}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Runner arch: ${{ runner.arch }}" >> "$GITHUB_STEP_SUMMARY"
