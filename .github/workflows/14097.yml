@@ -1,4 +1,4 @@
-name: Rustup macOS 15 action repro
+name: Rustup and Cargo via Actions repro
 
 on:
   workflow_dispatch:
@@ -40,11 +40,12 @@ jobs:
           cat /imagegeneration/imagedata.json 2>/dev/null || true
           cat /usr/local/share/runner-images/image-info.json 2>/dev/null || true
 
-      - name: Print rust/cargo/rustup diagnostics
+      - name: Print initial Rust diagnostics
         shell: bash
         run: |
           set -x
 
+          echo "=== Initial resolved tools ==="
           command -v rustup || true
           command -v cargo || true
           command -v rustc || true
@@ -52,10 +53,6 @@ jobs:
           which rustup || true
           which cargo || true
           which rustc || true
-
-          ls -la "$(command -v rustup)" || true
-          ls -la "$(command -v cargo)" || true
-          ls -la "$(command -v rustc)" || true
 
           rustup --version || true
           rustup show || true
@@ -66,142 +63,42 @@ jobs:
           brew --prefix || true
           brew list --versions rustup || true
           brew info rustup || true
-          brew linkage rustup || true
 
-          echo "=== Rustup files ==="
-          ls -la /opt/homebrew/bin/rustup /usr/local/bin/rustup 2>/dev/null || true
-          ls -la /opt/homebrew/Cellar/rustup* /usr/local/Cellar/rustup* 2>/dev/null || true
-
-      - name: Prepare minimal Rust workspace
+      - name: Prepare minimal Rust project
         shell: bash
         run: |
           set -x
 
-          mkdir -p repro-rust/chasquimq-node/src
-          mkdir -p repro-rust/chasquimq/src
+          mkdir -p repro-rust/src
 
-          cd repro-rust
-
-          cat > Cargo.toml <<'EOF'
-          [workspace]
-          members = [
-            "chasquimq",
-            "chasquimq-node"
-          ]
-
-          [workspace.package]
+          cat > repro-rust/Cargo.toml <<'EOF'
+          [package]
+          name = "rustup-cargo-actions-repro"
+          version = "0.1.0"
           edition = "2021"
-          license = "MIT"
-          repository = "https://github.com/jotarios/chasquimq"
-          rust-version = "1.82"
-          EOF
-
-          cat > chasquimq/Cargo.toml <<'EOF'
-          [package]
-          name = "chasquimq"
-          version = "1.2.0"
-          edition.workspace = true
-          license.workspace = true
-          repository.workspace = true
-          rust-version.workspace = true
-          publish = false
-
-          [lib]
-          path = "src/lib.rs"
-          EOF
-
-          cat > chasquimq/src/lib.rs <<'EOF'
-          pub fn placeholder() {}
-          EOF
-
-          cat > chasquimq-node/Cargo.toml <<'EOF'
-          [package]
-          name = "chasquimq-node"
-          version = "1.2.0"
-          description = "Node.js NAPI-RS bindings for the chasquimq message broker."
-          edition.workspace = true
-          license.workspace = true
-          repository.workspace = true
-          rust-version.workspace = true
-          publish = false
-
-          [lib]
-          crate-type = ["cdylib", "rlib"]
 
           [dependencies]
-          napi = { version = "2", default-features = false, features = ["napi9", "async", "tokio_rt", "serde-json"] }
-          napi-derive = "2"
-          chasquimq = { path = "../chasquimq" }
-          tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
-          tokio-util = { version = "0.7", features = ["rt"] }
           serde = { version = "1", features = ["derive"] }
           serde_json = "1"
-          bytes = "1"
-          rmp-serde = "1"
           thiserror = "1"
-          tracing = "0.1"
-
-          [build-dependencies]
-          napi-build = "2"
-
-          [profile.release]
-          lto = true
-          codegen-units = 1
+          tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
           EOF
 
-          cat > chasquimq-node/src/lib.rs <<'EOF'
-          pub fn placeholder() {}
+          cat > repro-rust/src/main.rs <<'EOF'
+          fn main() {
+              println!("hello from rustup-cargo-actions-repro");
+          }
           EOF
 
-      - name: Direct repro A - rustup component add llvm-tools-preview
-        id: direct_rustup
-        continue-on-error: true
+          cat repro-rust/Cargo.toml
+          cat repro-rust/src/main.rs
+
+      - name: Print Rust diagnostics before rust-toolchain action
         shell: bash
         run: |
           set -x
 
-          echo "=== Resolved rustup before direct repro ==="
-          command -v rustup
-          which rustup
-          rustup --version
-
-          rustup update --no-self-update stable
-          rustup override set stable
-
-          rustup component add llvm-tools-preview
-
-      - name: Direct repro B - cargo metadata
-        id: direct_cargo_metadata
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== Resolved cargo before direct repro ==="
-          command -v cargo
-          which cargo
-          cargo --version
-
-          cargo metadata \
-            --format-version 1 \
-            --manifest-path "$GITHUB_WORKSPACE/repro-rust/chasquimq-node/Cargo.toml"
-
-      - name: Action repro A - PyO3 maturin-action
-        id: maturin_action
-        continue-on-error: true
-        uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          args: --manifest-path repro-rust/chasquimq-node/Cargo.toml --release
-          target: ${{ runner.arch == 'ARM64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
-
-      - name: Print diagnostics after maturin-action
-        if: always()
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== After maturin-action ==="
+          echo "=== Before dtolnay/rust-toolchain ==="
           command -v rustup || true
           command -v cargo || true
           command -v rustc || true
@@ -215,56 +112,88 @@ jobs:
           cargo --version || true
           rustc --version -v || true
 
-          env | sort
-
-      - name: Install Node.js
-        if: always()
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Action-like repro B - napi-rs CLI calls cargo metadata
-        id: napi_cli
+      - name: Action repro A - install stable toolchain with llvm-tools-preview
+        id: rust_toolchain_action
         continue-on-error: true
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Print Rust diagnostics after rust-toolchain action
+        if: always()
         shell: bash
-        working-directory: repro-rust/chasquimq-node
         run: |
           set -x
 
-          echo "=== Resolved cargo before napi-rs repro ==="
-          command -v cargo
-          which cargo
-          cargo --version
+          echo "=== After dtolnay/rust-toolchain ==="
+          command -v rustup || true
+          command -v cargo || true
+          command -v rustc || true
 
-          echo "=== Resolved node/npm/npx ==="
-          command -v node
-          command -v npm
-          command -v npx
-          node --version
-          npm --version
+          which rustup || true
+          which cargo || true
+          which rustc || true
 
-          # This path is closer to the real @napi-rs failure:
-          # napi-rs CLI shells out to cargo metadata.
-          npx --yes @napi-rs/cli --version
+          rustup --version || true
+          rustup show || true
+          cargo --version || true
+          rustc --version -v || true
 
-          # Try a command that forces napi-rs to inspect Cargo.toml.
-          npx --yes @napi-rs/cli build \
-            --platform \
-            --release \
-            --manifest-path "$GITHUB_WORKSPACE/repro-rust/chasquimq-node/Cargo.toml"
+      - name: Action repro B - cargo metadata through actions-rs/cargo
+        id: cargo_metadata_action
+        continue-on-error: true
+        uses: actions-rs/cargo@v1
+        with:
+          command: metadata
+          args: --format-version 1 --manifest-path repro-rust/Cargo.toml
 
-      - name: Final repro summary
+      - name: Direct comparison - rustup component add
+        id: direct_rustup
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -x
+
+          echo "=== Direct rustup comparison ==="
+          command -v rustup || true
+          which rustup || true
+          rustup --version || true
+
+          rustup component add llvm-tools-preview
+
+      - name: Direct comparison - cargo metadata
+        id: direct_cargo_metadata
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -x
+
+          echo "=== Direct cargo comparison ==="
+          command -v cargo || true
+          which cargo || true
+          cargo --version || true
+
+          cargo metadata \
+            --format-version 1 \
+            --manifest-path repro-rust/Cargo.toml
+
+      - name: Final summary
         if: always()
         shell: bash
         run: |
-          echo "## Repro summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Rustup/Cargo Actions repro summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+
           echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Direct rustup component add | ${{ steps.direct_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Direct cargo metadata | ${{ steps.direct_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| PyO3/maturin-action | ${{ steps.maturin_action.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| @napi-rs/cli build | ${{ steps.napi_cli.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| dtolnay/rust-toolchain with llvm-tools-preview | ${{ steps.rust_toolchain_action.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| actions-rs/cargo metadata | ${{ steps.cargo_metadata_action.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| direct rustup component add | ${{ steps.direct_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| direct cargo metadata | ${{ steps.direct_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "ImageOS: ${ImageOS:-}" >> "$GITHUB_STEP_SUMMARY"
           echo "ImageVersion: ${ImageVersion:-}" >> "$GITHUB_STEP_SUMMARY"
