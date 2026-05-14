@@ -1,0 +1,108 @@
+name: Rustup macOS 15 repro
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS 15 ARM64
+            os: macos-15-arm64
+          - name: macOS 15 Intel
+            os: macos-15-intel
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Print runner/image info
+        shell: bash
+        run: |
+          set -x
+
+          echo "runner.os=${{ runner.os }}"
+          echo "runner.arch=${{ runner.arch }}"
+          echo "matrix.os=${{ matrix.os }}"
+
+          echo "ImageOS=${ImageOS:-}"
+          echo "ImageVersion=${ImageVersion:-}"
+
+          sw_vers
+          uname -a
+          arch
+
+          echo "PATH=$PATH"
+
+          echo "=== Runner image metadata ==="
+          cat /imagegeneration/imagedata.json 2>/dev/null || true
+          cat /usr/local/share/runner-images/image-info.json 2>/dev/null || true
+
+      - name: Print rust/cargo/rustup diagnostics
+        shell: bash
+        run: |
+          set -x
+
+          command -v rustup || true
+          command -v cargo || true
+          command -v rustc || true
+
+          ls -la "$(command -v rustup)" || true
+          ls -la "$(command -v cargo)" || true
+          ls -la "$(command -v rustc)" || true
+
+          rustup --version || true
+          rustup show || true
+          cargo --version || true
+          rustc --version -v || true
+
+          echo "=== Homebrew rustup info ==="
+          brew --prefix || true
+          brew list --versions rustup || true
+          brew info rustup || true
+          brew linkage rustup || true
+
+          echo "=== Rustup files ==="
+          ls -la /opt/homebrew/bin/rustup /usr/local/bin/rustup 2>/dev/null || true
+          ls -la /opt/homebrew/Cellar/rustup* /usr/local/Cellar/rustup* 2>/dev/null || true
+
+      - name: Repro A - rustup component add llvm-tools-preview
+        shell: bash
+        run: |
+          set -x
+
+          rustup update --no-self-update stable
+          rustup override set stable
+
+          # This is the reported failing path:
+          # Error: unexpected argument '+stable' found
+          rustup component add llvm-tools-preview
+
+      - name: Repro B - cargo metadata
+        shell: bash
+        run: |
+          set -x
+
+          mkdir -p repro-rust/src
+          cd repro-rust
+
+          cat > Cargo.toml <<'EOF'
+          [package]
+          name = "rustup-macos15-repro"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          EOF
+
+          cat > src/main.rs <<'EOF'
+          fn main() {
+              println!("hello");
+          }
+          EOF
+
+          # This is the second reported failing path:
+          # error: unexpected argument 'metadata' found
+          cargo metadata --format-version 1 --manifest-path Cargo.toml
