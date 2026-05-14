@@ -1,31 +1,27 @@
-name: Rustup exact path via action repro
+name: Check brew rustup-init formula version
 
 on:
   workflow_dispatch:
 
 jobs:
-  repro:
-    name: ${{ matrix.name }}
+  check-rustup-init:
+    name: Check rustup-init formula #${{ matrix.run }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: macOS 15 ARM64
-            os: macos-15
-          - name: macOS 15 Intel
-            os: macos-15-intel
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-15
 
     steps:
-      - name: Print runner/image info
+      - name: Print image info
         shell: bash
         run: |
           set -x
 
-          echo "runner.os=${{ runner.os }}"
-          echo "runner.arch=${{ runner.arch }}"
-          echo "matrix.os=${{ matrix.os }}"
+          echo "Run number: ${{ matrix.run }}"
+          echo "Runner OS: ${{ runner.os }}"
+          echo "Runner arch: ${{ runner.arch }}"
 
           echo "ImageOS=${ImageOS:-}"
           echo "ImageVersion=${ImageVersion:-}"
@@ -34,245 +30,33 @@ jobs:
           uname -a
           arch
 
-          echo "PATH=$PATH"
-
           echo "=== Runner image metadata ==="
           cat /imagegeneration/imagedata.json 2>/dev/null || true
           cat /usr/local/share/runner-images/image-info.json 2>/dev/null || true
 
-      - name: Print initial Rust diagnostics
+      - name: Print Homebrew rustup-init formula version
         shell: bash
         run: |
           set -x
 
-          echo "=== Resolved by PATH ==="
-          command -v rustup || true
-          command -v cargo || true
-          command -v rustc || true
+          echo "=== Homebrew info ==="
+          brew --version
+          brew --prefix
 
-          which rustup || true
-          which cargo || true
-          which rustc || true
+          echo "=== rustup-init formula versions ==="
+          brew list --versions rustup-init || true
+          brew info rustup-init || true
 
-          rustup --version || true
-          rustup show || true
-          cargo --version || true
-          rustc --version -v || true
-
-          echo "=== Exact binary paths ==="
-          ls -la /opt/homebrew/bin/rustup /usr/local/bin/rustup 2>/dev/null || true
-          ls -la /opt/homebrew/bin/cargo /usr/local/bin/cargo 2>/dev/null || true
-
-          echo "=== Homebrew rustup info ==="
-          brew --prefix || true
+          echo "=== rustup formula versions, if installed ==="
           brew list --versions rustup || true
           brew info rustup || true
 
-      - name: Direct comparison - exact /opt/homebrew rustup
-        id: direct_opt_homebrew_rustup
-        if: runner.arch == 'ARM64'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -x
+          echo "=== Binary paths ==="
+          command -v rustup || true
+          command -v rustup-init || true
 
-          ls -la /opt/homebrew/bin/rustup
-          /opt/homebrew/bin/rustup --version
-          /opt/homebrew/bin/rustup show
+          ls -la /opt/homebrew/bin/rustup* 2>/dev/null || true
+          ls -la /usr/local/bin/rustup* 2>/dev/null || true
 
-          /opt/homebrew/bin/rustup update --no-self-update stable
-          /opt/homebrew/bin/rustup override set stable
-
-          # Exact direct command
-          /opt/homebrew/bin/rustup component add llvm-tools-preview
-
-      - name: Action repro - exact /opt/homebrew rustup through actions/github-script
-        id: action_opt_homebrew_rustup
-        if: runner.arch == 'ARM64'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { execFileSync } = require("child_process");
-            const fs = require("fs");
-
-            const rustup = "/opt/homebrew/bin/rustup";
-
-            console.log(`Checking exact rustup path: ${rustup}`);
-            console.log(fs.existsSync(rustup) ? "rustup exists" : "rustup does not exist");
-
-            function run(file, args) {
-              console.log(`\n> ${file} ${args.join(" ")}`);
-              execFileSync(file, args, {
-                stdio: "inherit",
-                env: process.env,
-                cwd: process.env.GITHUB_WORKSPACE,
-              });
-            }
-
-            run(rustup, ["--version"]);
-            run(rustup, ["show"]);
-            run(rustup, ["update", "--no-self-update", "stable"]);
-            run(rustup, ["override", "set", "stable"]);
-
-            // Exact action-wrapped command:
-            // /opt/homebrew/bin/rustup component add llvm-tools-preview
-            run(rustup, ["component", "add", "llvm-tools-preview"]);
-
-      - name: Direct comparison - Intel Homebrew rustup
-        id: direct_usr_local_rustup
-        if: runner.arch == 'X64'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -x
-
-          ls -la /usr/local/bin/rustup
-          /usr/local/bin/rustup --version
-          /usr/local/bin/rustup show
-
-          /usr/local/bin/rustup update --no-self-update stable
-          /usr/local/bin/rustup override set stable
-
-          /usr/local/bin/rustup component add llvm-tools-preview
-
-      - name: Action repro - Intel Homebrew rustup through actions/github-script
-        id: action_usr_local_rustup
-        if: runner.arch == 'X64'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { execFileSync } = require("child_process");
-            const fs = require("fs");
-
-            const rustup = "/usr/local/bin/rustup";
-
-            console.log(`Checking exact rustup path: ${rustup}`);
-            console.log(fs.existsSync(rustup) ? "rustup exists" : "rustup does not exist");
-
-            function run(file, args) {
-              console.log(`\n> ${file} ${args.join(" ")}`);
-              execFileSync(file, args, {
-                stdio: "inherit",
-                env: process.env,
-                cwd: process.env.GITHUB_WORKSPACE,
-              });
-            }
-
-            run(rustup, ["--version"]);
-            run(rustup, ["show"]);
-            run(rustup, ["update", "--no-self-update", "stable"]);
-            run(rustup, ["override", "set", "stable"]);
-            run(rustup, ["component", "add", "llvm-tools-preview"]);
-
-      - name: Prepare minimal Rust project
-        if: always()
-        shell: bash
-        run: |
-          set -x
-
-          mkdir -p repro-rust/src
-
-          cat > repro-rust/Cargo.toml <<'EOF'
-          [package]
-          name = "rustup-cargo-actions-repro"
-          version = "0.1.0"
-          edition = "2021"
-
-          [dependencies]
-          serde = { version = "1", features = ["derive"] }
-          serde_json = "1"
-          thiserror = "1"
-          EOF
-
-          cat > repro-rust/src/main.rs <<'EOF'
-          fn main() {
-              println!("hello");
-          }
-          EOF
-
-      - name: Action repro - exact cargo metadata through actions/github-script ARM64
-        id: action_opt_homebrew_cargo_metadata
-        if: always() && runner.arch == 'ARM64'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { execFileSync } = require("child_process");
-            const path = require("path");
-
-            const cargo = "/opt/homebrew/bin/cargo";
-            const manifest = path.join(process.env.GITHUB_WORKSPACE, "repro-rust", "Cargo.toml");
-
-            function run(file, args) {
-              console.log(`\n> ${file} ${args.join(" ")}`);
-              execFileSync(file, args, {
-                stdio: "inherit",
-                env: process.env,
-                cwd: process.env.GITHUB_WORKSPACE,
-              });
-            }
-
-            run(cargo, ["--version"]);
-
-            // Exact action-wrapped cargo metadata call
-            run(cargo, [
-              "metadata",
-              "--format-version",
-              "1",
-              "--manifest-path",
-              manifest,
-            ]);
-
-      - name: Action repro - exact cargo metadata through actions/github-script Intel
-        id: action_usr_local_cargo_metadata
-        if: always() && runner.arch == 'X64'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { execFileSync } = require("child_process");
-            const path = require("path");
-
-            const cargo = "/usr/local/bin/cargo";
-            const manifest = path.join(process.env.GITHUB_WORKSPACE, "repro-rust", "Cargo.toml");
-
-            function run(file, args) {
-              console.log(`\n> ${file} ${args.join(" ")}`);
-              execFileSync(file, args, {
-                stdio: "inherit",
-                env: process.env,
-                cwd: process.env.GITHUB_WORKSPACE,
-              });
-            }
-
-            run(cargo, ["--version"]);
-            run(cargo, [
-              "metadata",
-              "--format-version",
-              "1",
-              "--manifest-path",
-              manifest,
-            ]);
-
-      - name: Final summary
-        if: always()
-        shell: bash
-        run: |
-          echo "## Rustup exact-path action repro summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Direct /opt/homebrew/bin/rustup component add ARM64 | ${{ steps.direct_opt_homebrew_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Action /opt/homebrew/bin/rustup component add ARM64 | ${{ steps.action_opt_homebrew_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Direct /usr/local/bin/rustup component add Intel | ${{ steps.direct_usr_local_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Action /usr/local/bin/rustup component add Intel | ${{ steps.action_usr_local_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Action /opt/homebrew/bin/cargo metadata ARM64 | ${{ steps.action_opt_homebrew_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Action /usr/local/bin/cargo metadata Intel | ${{ steps.action_usr_local_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "ImageOS: ${ImageOS:-}" >> "$GITHUB_STEP_SUMMARY"
-          echo "ImageVersion: ${ImageVersion:-}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Runner arch: ${{ runner.arch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "=== Rustup version ==="
+          rustup --version || true
