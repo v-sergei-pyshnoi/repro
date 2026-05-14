@@ -1,4 +1,4 @@
-name: Rustup and Cargo via Actions repro
+name: Rustup exact path via action repro
 
 on:
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
         run: |
           set -x
 
-          echo "=== Initial resolved tools ==="
+          echo "=== Resolved by PATH ==="
           command -v rustup || true
           command -v cargo || true
           command -v rustc || true
@@ -59,12 +59,115 @@ jobs:
           cargo --version || true
           rustc --version -v || true
 
+          echo "=== Exact binary paths ==="
+          ls -la /opt/homebrew/bin/rustup /usr/local/bin/rustup 2>/dev/null || true
+          ls -la /opt/homebrew/bin/cargo /usr/local/bin/cargo 2>/dev/null || true
+
           echo "=== Homebrew rustup info ==="
           brew --prefix || true
           brew list --versions rustup || true
           brew info rustup || true
 
+      - name: Direct comparison - exact /opt/homebrew rustup
+        id: direct_opt_homebrew_rustup
+        if: runner.arch == 'ARM64'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -x
+
+          ls -la /opt/homebrew/bin/rustup
+          /opt/homebrew/bin/rustup --version
+          /opt/homebrew/bin/rustup show
+
+          /opt/homebrew/bin/rustup update --no-self-update stable
+          /opt/homebrew/bin/rustup override set stable
+
+          # Exact direct command
+          /opt/homebrew/bin/rustup component add llvm-tools-preview
+
+      - name: Action repro - exact /opt/homebrew rustup through actions/github-script
+        id: action_opt_homebrew_rustup
+        if: runner.arch == 'ARM64'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execFileSync } = require("child_process");
+            const fs = require("fs");
+
+            const rustup = "/opt/homebrew/bin/rustup";
+
+            console.log(`Checking exact rustup path: ${rustup}`);
+            console.log(fs.existsSync(rustup) ? "rustup exists" : "rustup does not exist");
+
+            function run(file, args) {
+              console.log(`\n> ${file} ${args.join(" ")}`);
+              execFileSync(file, args, {
+                stdio: "inherit",
+                env: process.env,
+                cwd: process.env.GITHUB_WORKSPACE,
+              });
+            }
+
+            run(rustup, ["--version"]);
+            run(rustup, ["show"]);
+            run(rustup, ["update", "--no-self-update", "stable"]);
+            run(rustup, ["override", "set", "stable"]);
+
+            // Exact action-wrapped command:
+            // /opt/homebrew/bin/rustup component add llvm-tools-preview
+            run(rustup, ["component", "add", "llvm-tools-preview"]);
+
+      - name: Direct comparison - Intel Homebrew rustup
+        id: direct_usr_local_rustup
+        if: runner.arch == 'X64'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -x
+
+          ls -la /usr/local/bin/rustup
+          /usr/local/bin/rustup --version
+          /usr/local/bin/rustup show
+
+          /usr/local/bin/rustup update --no-self-update stable
+          /usr/local/bin/rustup override set stable
+
+          /usr/local/bin/rustup component add llvm-tools-preview
+
+      - name: Action repro - Intel Homebrew rustup through actions/github-script
+        id: action_usr_local_rustup
+        if: runner.arch == 'X64'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execFileSync } = require("child_process");
+            const fs = require("fs");
+
+            const rustup = "/usr/local/bin/rustup";
+
+            console.log(`Checking exact rustup path: ${rustup}`);
+            console.log(fs.existsSync(rustup) ? "rustup exists" : "rustup does not exist");
+
+            function run(file, args) {
+              console.log(`\n> ${file} ${args.join(" ")}`);
+              execFileSync(file, args, {
+                stdio: "inherit",
+                env: process.env,
+                cwd: process.env.GITHUB_WORKSPACE,
+              });
+            }
+
+            run(rustup, ["--version"]);
+            run(rustup, ["show"]);
+            run(rustup, ["update", "--no-self-update", "stable"]);
+            run(rustup, ["override", "set", "stable"]);
+            run(rustup, ["component", "add", "llvm-tools-preview"]);
+
       - name: Prepare minimal Rust project
+        if: always()
         shell: bash
         run: |
           set -x
@@ -81,118 +184,93 @@ jobs:
           serde = { version = "1", features = ["derive"] }
           serde_json = "1"
           thiserror = "1"
-          tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
           EOF
 
           cat > repro-rust/src/main.rs <<'EOF'
           fn main() {
-              println!("hello from rustup-cargo-actions-repro");
+              println!("hello");
           }
           EOF
 
-          cat repro-rust/Cargo.toml
-          cat repro-rust/src/main.rs
-
-      - name: Print Rust diagnostics before rust-toolchain action
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== Before dtolnay/rust-toolchain ==="
-          command -v rustup || true
-          command -v cargo || true
-          command -v rustc || true
-
-          which rustup || true
-          which cargo || true
-          which rustc || true
-
-          rustup --version || true
-          rustup show || true
-          cargo --version || true
-          rustc --version -v || true
-
-      - name: Action repro A - install stable toolchain with llvm-tools-preview
-        id: rust_toolchain_action
+      - name: Action repro - exact cargo metadata through actions/github-script ARM64
+        id: action_opt_homebrew_cargo_metadata
+        if: always() && runner.arch == 'ARM64'
         continue-on-error: true
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions/github-script@v7
         with:
-          toolchain: stable
-          components: llvm-tools-preview
+          script: |
+            const { execFileSync } = require("child_process");
+            const path = require("path");
 
-      - name: Print Rust diagnostics after rust-toolchain action
-        if: always()
-        shell: bash
-        run: |
-          set -x
+            const cargo = "/opt/homebrew/bin/cargo";
+            const manifest = path.join(process.env.GITHUB_WORKSPACE, "repro-rust", "Cargo.toml");
 
-          echo "=== After dtolnay/rust-toolchain ==="
-          command -v rustup || true
-          command -v cargo || true
-          command -v rustc || true
+            function run(file, args) {
+              console.log(`\n> ${file} ${args.join(" ")}`);
+              execFileSync(file, args, {
+                stdio: "inherit",
+                env: process.env,
+                cwd: process.env.GITHUB_WORKSPACE,
+              });
+            }
 
-          which rustup || true
-          which cargo || true
-          which rustc || true
+            run(cargo, ["--version"]);
 
-          rustup --version || true
-          rustup show || true
-          cargo --version || true
-          rustc --version -v || true
+            // Exact action-wrapped cargo metadata call
+            run(cargo, [
+              "metadata",
+              "--format-version",
+              "1",
+              "--manifest-path",
+              manifest,
+            ]);
 
-      - name: Action repro B - cargo metadata through actions-rs/cargo
-        id: cargo_metadata_action
+      - name: Action repro - exact cargo metadata through actions/github-script Intel
+        id: action_usr_local_cargo_metadata
+        if: always() && runner.arch == 'X64'
         continue-on-error: true
-        uses: actions-rs/cargo@v1
+        uses: actions/github-script@v7
         with:
-          command: metadata
-          args: --format-version 1 --manifest-path repro-rust/Cargo.toml
+          script: |
+            const { execFileSync } = require("child_process");
+            const path = require("path");
 
-      - name: Direct comparison - rustup component add
-        id: direct_rustup
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -x
+            const cargo = "/usr/local/bin/cargo";
+            const manifest = path.join(process.env.GITHUB_WORKSPACE, "repro-rust", "Cargo.toml");
 
-          echo "=== Direct rustup comparison ==="
-          command -v rustup || true
-          which rustup || true
-          rustup --version || true
+            function run(file, args) {
+              console.log(`\n> ${file} ${args.join(" ")}`);
+              execFileSync(file, args, {
+                stdio: "inherit",
+                env: process.env,
+                cwd: process.env.GITHUB_WORKSPACE,
+              });
+            }
 
-          rustup component add llvm-tools-preview
-
-      - name: Direct comparison - cargo metadata
-        id: direct_cargo_metadata
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== Direct cargo comparison ==="
-          command -v cargo || true
-          which cargo || true
-          cargo --version || true
-
-          cargo metadata \
-            --format-version 1 \
-            --manifest-path repro-rust/Cargo.toml
+            run(cargo, ["--version"]);
+            run(cargo, [
+              "metadata",
+              "--format-version",
+              "1",
+              "--manifest-path",
+              manifest,
+            ]);
 
       - name: Final summary
         if: always()
         shell: bash
         run: |
-          echo "## Rustup/Cargo Actions repro summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Rustup exact-path action repro summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
           echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| dtolnay/rust-toolchain with llvm-tools-preview | ${{ steps.rust_toolchain_action.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| actions-rs/cargo metadata | ${{ steps.cargo_metadata_action.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| direct rustup component add | ${{ steps.direct_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| direct cargo metadata | ${{ steps.direct_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Direct /opt/homebrew/bin/rustup component add ARM64 | ${{ steps.direct_opt_homebrew_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Action /opt/homebrew/bin/rustup component add ARM64 | ${{ steps.action_opt_homebrew_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Direct /usr/local/bin/rustup component add Intel | ${{ steps.direct_usr_local_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Action /usr/local/bin/rustup component add Intel | ${{ steps.action_usr_local_rustup.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Action /opt/homebrew/bin/cargo metadata ARM64 | ${{ steps.action_opt_homebrew_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Action /usr/local/bin/cargo metadata Intel | ${{ steps.action_usr_local_cargo_metadata.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "ImageOS: ${ImageOS:-}" >> "$GITHUB_STEP_SUMMARY"
