@@ -73,36 +73,96 @@ jobs:
         run: |
           set -x
 
-          rustup update --no-self-update stable
-          rustup override set stable
+          /opt/homebrew/bin/rustup update --no-self-update stable
+          /opt/homebrew/bin/rustup override set stable
 
           # This is the reported failing path:
           # Error: unexpected argument '+stable' found
-          rustup component add llvm-tools-preview
+          /opt/homebrew/bin/rustup component add llvm-tools-preview
 
       - name: Repro B - cargo metadata
         shell: bash
         run: |
           set -x
 
-          mkdir -p repro-rust/src
+          mkdir -p repro-rust/chasquimq-node/src
+          mkdir -p repro-rust/chasquimq/src
+
           cd repro-rust
 
           cat > Cargo.toml <<'EOF'
-          [package]
-          name = "rustup-macos15-repro"
-          version = "0.1.0"
-          edition = "2021"
+          [workspace]
+          members = [
+            "chasquimq",
+            "chasquimq-node"
+          ]
 
-          [dependencies]
+          [workspace.package]
+          edition = "2021"
+          license = "MIT"
+          repository = "https://github.com/jotarios/chasquimq"
+          rust-version = "1.82"
           EOF
 
-          cat > src/main.rs <<'EOF'
-          fn main() {
-              println!("hello");
-          }
+          cat > chasquimq/Cargo.toml <<'EOF'
+          [package]
+          name = "chasquimq"
+          version = "1.2.0"
+          edition.workspace = true
+          license.workspace = true
+          repository.workspace = true
+          rust-version.workspace = true
+          publish = false
+
+          [lib]
+          path = "src/lib.rs"
+          EOF
+
+          cat > chasquimq/src/lib.rs <<'EOF'
+          pub fn placeholder() {}
+          EOF
+
+          cat > chasquimq-node/Cargo.toml <<'EOF'
+          [package]
+          name = "chasquimq-node"
+          version = "1.2.0"
+          description = "Node.js NAPI-RS bindings for the chasquimq message broker."
+          edition.workspace = true
+          license.workspace = true
+          repository.workspace = true
+          rust-version.workspace = true
+          publish = false
+
+          [lib]
+          crate-type = ["cdylib", "rlib"]
+
+          [dependencies]
+          napi = { version = "2", default-features = false, features = ["napi9", "async", "tokio_rt", "serde-json"] }
+          napi-derive = "2"
+          chasquimq = { path = "../chasquimq" }
+          tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+          tokio-util = { version = "0.7", features = ["rt"] }
+          serde = { version = "1", features = ["derive"] }
+          serde_json = "1"
+          bytes = "1"
+          rmp-serde = "1"
+          thiserror = "1"
+          tracing = "0.1"
+
+          [build-dependencies]
+          napi-build = "2"
+
+          [profile.release]
+          lto = true
+          codegen-units = 1
+          EOF
+
+          cat > chasquimq-node/src/lib.rs <<'EOF'
+          pub fn placeholder() {}
           EOF
 
           # This is the second reported failing path:
           # error: unexpected argument 'metadata' found
-          cargo metadata --format-version 1 --manifest-path Cargo.toml
+          /opt/homebrew/bin/cargo metadata \
+            --format-version 1 \
+            --manifest-path "$(pwd)/chasquimq-node/Cargo.toml"
