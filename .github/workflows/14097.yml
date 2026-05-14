@@ -1,4 +1,4 @@
-name: Repro dtolnay rust-toolchain on macos-15
+name: Repro rust-toolchain on macos-15
 
 on:
   workflow_dispatch:
@@ -9,77 +9,9 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Print runner/image info
-        shell: bash
-        run: |
-          set -x
-
-          echo "Runner OS: ${{ runner.os }}"
-          echo "Runner arch: ${{ runner.arch }}"
-          echo "ImageOS=${ImageOS:-}"
-          echo "ImageVersion=${ImageVersion:-}"
-
-          sw_vers
-          uname -a
-          arch
-
-      - name: Print Rust diagnostics before action
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== Resolved tools ==="
-          command -v rustup || true
-          command -v rustup-init || true
-          command -v cargo || true
-          command -v rustc || true
-
-          echo "=== Versions ==="
-          rustup --version || true
-          rustup show || true
-          cargo --version || true
-          rustc --version -v || true
-
-          echo "=== Homebrew rustup ==="
-          brew --version || true
-          brew --prefix || true
-          brew list --versions rustup-init || true
-          brew list --versions rustup || true
-          brew info rustup-init || true
-
-          echo "=== Rustup files ==="
-          ls -la /opt/homebrew/bin/rustup* 2>/dev/null || true
-          find /opt/homebrew/Cellar/rustup/1.29.0 -maxdepth 4 -type f | sort || true
-
-      - name: Install stable Rust toolchain with dtolnay/rust-toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
         with:
-          targets: aarch64-apple-darwin
-          components: llvm-tools-preview
-
-      - name: Print Rust diagnostics after action
-        if: always()
-        shell: bash
-        run: |
-          set -x
-
-          echo "=== Resolved tools after dtolnay/rust-toolchain ==="
-          command -v rustup || true
-          command -v rustup-init || true
-          command -v cargo || true
-          command -v rustc || true
-
-          echo "=== Versions after action ==="
-          rustup --version || true
-          rustup show || true
-          cargo --version || true
-          rustc --version -v || true
-
-      - name: Verify component is installed
-        if: always()
-        shell: bash
-        run: |
-          set -x
-
-          rustup component list --installed || true
-          rustup component list --installed | grep llvm-tools-preview
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --all-targets
