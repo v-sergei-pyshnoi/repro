@@ -11,7 +11,7 @@ jobs:
       matrix:
         include:
           - name: macOS 15 ARM64
-            os: macos-15-arm64
+            os: macos-15
           - name: macOS 15 Intel
             os: macos-15-intel
 
