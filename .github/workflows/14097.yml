@@ -1,15 +1,49 @@
-name: Repro rust-toolchain on macos-15
+name: Repro rust-toolchain on macOS
 
 on:
   workflow_dispatch:
 
 jobs:
   repro:
-    name: dtolnay/rust-toolchain / macos-15
-    runs-on: macos-15
+    name: dtolnay/rust-toolchain / ${{ matrix.os }} / run ${{ matrix.run }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-26
+        run:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Print runner/image info
+        shell: bash
+        run: |
+          set -x
+
+          echo "Matrix OS: ${{ matrix.os }}"
+          echo "Matrix run: ${{ matrix.run }}"
+          echo "Runner OS: ${{ runner.os }}"
+          echo "Runner arch: ${{ runner.arch }}"
+          echo "ImageOS=${ImageOS:-}"
+          echo "ImageVersion=${ImageVersion:-}"
+
+          sw_vers
+          uname -a
+          arch
 
       - name: Create minimal Cargo project
         shell: bash
@@ -18,7 +52,7 @@ jobs:
 
           cat > Cargo.toml <<'EOF'
           [package]
-          name = "rust-toolchain-macos15-repro"
+          name = "rust-toolchain-macos-repro"
           version = "0.1.0"
           edition = "2021"
 
@@ -45,7 +79,7 @@ jobs:
 
           cat > src/main.rs <<'EOF'
           fn main() {
-              println!("hello from rust-toolchain-macos15-repro");
+              println!("hello from rust-toolchain-macos-repro");
           }
           EOF
 
@@ -57,4 +91,5 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo build --locked --all-targets
+      - name: Build
+        run: cargo build --locked --all-targets
