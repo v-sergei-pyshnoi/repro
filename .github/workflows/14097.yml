@@ -1,11 +1,11 @@
-name: Repro cargo llvm-cov nextest on macos-15
+name: Repro dtolnay rust-toolchain on macos-15
 
 on:
   workflow_dispatch:
 
 jobs:
   repro:
-    name: macos-15 cargo llvm-cov nextest
+    name: dtolnay/rust-toolchain / macos-15
     runs-on: macos-15
 
     steps:
@@ -23,17 +23,18 @@ jobs:
           uname -a
           arch
 
-      - name: Print initial Rust/Homebrew info
+      - name: Print Rust diagnostics before action
         shell: bash
         run: |
           set -x
 
-          echo "=== Rust tools ==="
+          echo "=== Resolved tools ==="
           command -v rustup || true
           command -v rustup-init || true
           command -v cargo || true
           command -v rustc || true
 
+          echo "=== Versions ==="
           rustup --version || true
           rustup show || true
           cargo --version || true
@@ -41,6 +42,7 @@ jobs:
 
           echo "=== Homebrew rustup ==="
           brew --version || true
+          brew --prefix || true
           brew list --versions rustup-init || true
           brew list --versions rustup || true
           brew info rustup-init || true
@@ -49,81 +51,35 @@ jobs:
           ls -la /opt/homebrew/bin/rustup* 2>/dev/null || true
           find /opt/homebrew/Cellar/rustup/1.29.0 -maxdepth 4 -type f | sort || true
 
-      - name: Create minimal Rust project
-        shell: bash
-        run: |
-          set -x
-
-          cargo new repro-project
-          cd repro-project
-
-          cat > src/lib.rs <<'EOF'
-          pub fn add(left: u64, right: u64) -> u64 {
-              left + right
-          }
-
-          #[cfg(test)]
-          mod tests {
-              use super::*;
-
-              #[test]
-              fn it_works() {
-                  assert_eq!(add(2, 2), 4);
-              }
-          }
-          EOF
-
-          cat > src/main.rs <<'EOF'
-          fn main() {
-              println!("hello");
-          }
-          EOF
-
-          cargo metadata --format-version 1
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
+      - name: Install stable Rust toolchain with dtolnay/rust-toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          tool: cargo-llvm-cov
+          targets: aarch64-apple-darwin
+          components: llvm-tools-preview
 
-      - name: Install cargo-nextest
-        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3.0.7
-        with:
-          tool: cargo-nextest@0.9.128
-
-      - name: Print Rust tools after actions
+      - name: Print Rust diagnostics after action
         if: always()
         shell: bash
         run: |
           set -x
 
+          echo "=== Resolved tools after dtolnay/rust-toolchain ==="
           command -v rustup || true
           command -v rustup-init || true
           command -v cargo || true
-          command -v cargo-llvm-cov || true
-          command -v cargo-nextest || true
+          command -v rustc || true
 
+          echo "=== Versions after action ==="
           rustup --version || true
           rustup show || true
           cargo --version || true
           rustc --version -v || true
-          cargo llvm-cov --version || true
-          cargo nextest --version || true
 
-      - name: Run cargo llvm-cov nextest
-        working-directory: repro-project
-        shell: bash
-        run: >
-          cargo llvm-cov nextest
-          --all-features
-          --lcov --output-path lcov.info --nocapture
-          --remap-path-prefix
-
-      - name: Print result
+      - name: Verify component is installed
         if: always()
         shell: bash
         run: |
           set -x
 
-          ls -la repro-project || true
-          ls -la repro-project/lcov.info || true
+          rustup component list --installed || true
+          rustup component list --installed | grep llvm-tools-preview
