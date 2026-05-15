@@ -10,10 +10,18 @@ jobs:
       fail-fast: false
       matrix:
         os:
+          - macos-14
           - macos-15
           - macos-26
+          - macos-14-intel
           - macos-15-intel
           - macos-26-intel
+        run:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
 
     runs-on: ${{ matrix.os }}
 
