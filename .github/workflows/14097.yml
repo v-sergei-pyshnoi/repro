@@ -12,17 +12,8 @@ jobs:
         os:
           - macos-15
           - macos-26
-        run:
-          - 1
-          - 2
-          - 3
-          - 4
-          - 5
-          - 6
-          - 7
-          - 8
-          - 9
-          - 10
+          - macos-15-intel
+          - macos-26-intel
 
     runs-on: ${{ matrix.os }}
 
