@@ -26,17 +26,17 @@ jobs:
           echo "======= ls -il /opt/homebrew/Cellar/rustup/1.29.0/bin/ ======="
           ls -ila /opt/homebrew/Cellar/rustup/1.29.0/bin/
           
-    #  - name: Reinstall rust
-    #    shell: bash
-    #    run: |
-    #      rustup --version
-    #      brew update
-    #      
-    #      brew uninstall rustup-init
-    #      rm -rf ~/.cargo/bin
-    #      rm -rf ~/.rustup
+      - name: Reinstall rust
+        shell: bash
+        run: |
+          rustup --version
+          brew update
+          
+          brew uninstall rustup-init
+          rm -rf ~/.cargo/bin
+          rm -rf ~/.rustup
 
-    #      brew install rust
+          brew install rust
 
         
       - name: Create minimal Cargo project
