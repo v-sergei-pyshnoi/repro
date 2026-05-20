@@ -17,8 +17,8 @@ jobs:
     steps:
       - name: Print brew info
         run: |
-          brew config
-          brew doctor
+          brew config || true
+          brew doctor || true
       - name: Print Rust info
         run: |
           echo "======= ls -ila ~/.cargo/bin ======="
