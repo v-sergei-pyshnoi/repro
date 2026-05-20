@@ -36,7 +36,8 @@ jobs:
           rm -rf ~/.cargo/bin
           rm -rf ~/.rustup
 
-          brew install rust
+          brew install rustup
+          rustup-init -y --no-modify-path --default-toolchain=stable --profile=minimal
 
         
       - name: Create minimal Cargo project
