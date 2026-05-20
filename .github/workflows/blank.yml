@@ -1,0 +1,117 @@
+name: Repro rust-toolchain on macOS for brew
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    name: brew repro
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-26
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Print brew info
+        run: |
+          brew config
+          brew doctor
+      - name: Print Rust info
+        run: |
+          echo "======= ls -ila ~/.cargo/bin ======="
+          ls -ila ~/.cargo/bin
+          echo "======= ls -il /opt/homebrew/Cellar/rustup/1.29.0/bin/ ======="
+          ls -ila /opt/homebrew/Cellar/rustup/1.29.0/bin/
+          
+    #  - name: Reinstall rust
+    #    shell: bash
+    #    run: |
+    #      rustup --version
+    #      brew update
+    #      
+    #      brew uninstall rustup-init
+    #      rm -rf ~/.cargo/bin
+    #      rm -rf ~/.rustup
+
+    #      brew install rust
+
+        
+      - name: Create minimal Cargo project
+        shell: bash
+        run: |
+          set -x
+
+          cat > Cargo.toml <<'EOF'
+          [package]
+          name = "rust-toolchain-macos-repro"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          EOF
+
+          mkdir -p src
+
+          cat > src/lib.rs <<'EOF'
+          pub fn add(left: u64, right: u64) -> u64 {
+              left + right
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+
+              #[test]
+              fn it_works() {
+                  assert_eq!(add(2, 2), 4);
+              }
+          }
+          EOF
+
+          cat > src/main.rs <<'EOF'
+          fn main() {
+              println!("hello from rust-toolchain-macos-repro");
+          }
+          EOF
+
+          cargo generate-lockfile
+
+      - name: Install Rust stable via dtolnay/rust-toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Print Rust after dtolnay/rust-toolchain
+        shell: bash
+        run: |
+          ls -il ~/.cargo/bin
+          which rustc
+          rustc --version
+          which cargo
+          cargo --version
+          which rustup
+          rustup --version
+          ls -il /opt/homebrew/bin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Print Rust after Swatinem/rust-cache@v2
+        shell: bash
+        run: |
+          ls -il ~/.cargo/bin
+          which rustc
+          rustc --version
+          which cargo
+          cargo --version
+          which rustup
+          rustup --version
+          ls -il /opt/homebrew/bin
+
+      - name: Build
+        shell: bash
+        run: |
+          which cargo
+          cargo build --locked --all-targets
