@@ -7,8 +7,10 @@ jobs:
     name: Example Metrics Job
 
     steps:
+      - name: Set up repository
+        uses: actions/checkout@v4
 
-      - uses: your-org/datadog-workflow-metrics@v1
+      - uses: .github/actions/datadog-workflow-status
         with:
           datadog-api-key: ${{ secrets.DATADOG_API_KEY }}
 
