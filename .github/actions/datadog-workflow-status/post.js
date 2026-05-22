@@ -17,8 +17,11 @@ async function run() {
       series: [
         {
           metric: "github.actions.workflow.duration",
-          type: "gauge",
-          points: [[endTime, duration]],
+          type: 3,
+          points: [        {
+          timestamp: endTime,
+          value: duration
+        }],
           tags: [
             `repo:${process.env.GITHUB_REPOSITORY}`,
             `workflow:${process.env.GITHUB_WORKFLOW}`,
@@ -29,7 +32,7 @@ async function run() {
       ]
     };
 
-    const response = await fetch("https://api.datadoghq.com/api/v1/series", {
+    const response = await fetch("https://api.datadoghq.com/api/v2/series", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
