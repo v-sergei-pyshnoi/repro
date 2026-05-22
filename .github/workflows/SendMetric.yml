@@ -10,7 +10,7 @@ jobs:
       - name: Set up repository
         uses: actions/checkout@v4
 
-      - uses: .github/actions/datadog-workflow-status
+      - uses: ./.github/actions/datadog-workflow-status
         with:
           datadog-api-key: ${{ secrets.DATADOG_API_KEY }}
 
