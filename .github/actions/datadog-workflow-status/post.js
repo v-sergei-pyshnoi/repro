@@ -41,6 +41,8 @@ async function run() {
       body: JSON.stringify(payload)
     });
 
+    console.log("Status:", response.status);
+    console.log("Response:", responseBody);
     if (!response.ok) {
       core.setFailed(await response.text());
     } else {
