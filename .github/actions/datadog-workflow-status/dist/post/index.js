@@ -27589,7 +27589,7 @@ async function run() {
       ]
     };
 
-    const response = await fetch("https://api.datadoghq.com/api/v2/series", {
+    const response = await fetch("https://api.datadoghq.eu/api/v2/series", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
