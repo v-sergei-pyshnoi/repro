@@ -42,7 +42,6 @@ async function run() {
     });
 
     console.log("Status:", response.status);
-    console.log("Response:", responseBody);
     if (!response.ok) {
       core.setFailed(await response.text());
     } else {
