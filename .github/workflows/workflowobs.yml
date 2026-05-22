@@ -1,0 +1,73 @@
+name: Workflow Observability
+
+on:
+  workflow_dispatch:
+
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Collect workflow metrics
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          REPO: v-sergei-pyshnoi/repro
+        run: |
+          workflows=(
+            "SendMetric.yml"
+          )
+
+          for workflow in "${workflows[@]}"; do
+            echo "Processing $workflow"
+
+            gh api \
+              repos/$REPO/actions/workflows/$workflow/runs \
+              --paginate \
+              -q '.workflow_runs[:10]' > runs.json
+
+            jq -c '.[]' runs.json | while read run; do
+              RUN_ID=$(echo "$run" | jq -r '.id')
+              STATUS=$(echo "$run" | jq -r '.conclusion')
+
+              START=$(echo "$run" | jq -r '.run_started_at')
+              END=$(echo "$run" | jq -r '.updated_at')
+
+              START_EPOCH=$(date -d "$START" +%s)
+              END_EPOCH=$(date -d "$END" +%s)
+
+              DURATION=$((END_EPOCH - START_EPOCH))
+
+
+              cat <<EOF > payload.json
+              {
+                "series": [
+                  {
+                    "metric": "github.actions.workflow",
+                    "type": 3,
+                    "points": [
+                      {"timestamp": $START_EPOCH, "value": $DURATION}
+                    ],
+                    "tags": [
+                      "repo:$REPO",
+                      "workflow:$workflow",
+                      "status:$STATUS",
+                      "run_id:$RUN_ID"
+                    ]
+                  }
+                ]
+              }
+              EOF
+
+              curl -s \
+                -X POST \
+                "https://api.datadoghq.eu/api/v2/series" \
+                -H "Content-Type: application/json" \
+                -H "DD-API-KEY: $DD_API_KEY" \
+                -d @payload.json
+
+              echo "Sent run $RUN_ID"
+            done
+          done
