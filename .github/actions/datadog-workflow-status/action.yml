@@ -1,4 +1,5 @@
-name: "Datadog Workflow Metrics"
+name: Datadog Workflow Status
+description: Sends workflow duration to Datadog
 
 inputs:
   datadog-api-key:
@@ -6,6 +7,5 @@ inputs:
 
 runs:
   using: "node24"
-
-  main: "index.js"
-  post: "post.js"
+  main: "dist/index.js"
+  post: "dist/post/index.js"

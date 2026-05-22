@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# Coverage / tests (if you add later)
+coverage/
+
+# Editor folders
+.vscode/
+.idea/
+
+# Optional: lockfile safety (keep if you want reproducible builds)
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock

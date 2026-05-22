@@ -1,0 +1,14 @@
+{
+  "name": "datadog-workflow-status",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "ncc build index.js -o dist && ncc build post.js -o dist/post"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.4"
+  }
+}
