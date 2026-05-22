@@ -1,0 +1,11 @@
+name: "Datadog Workflow Metrics"
+
+inputs:
+  datadog-api-key:
+    required: true
+
+runs:
+  using: "node22"
+
+  main: "index.js"
+  post: "post.js"

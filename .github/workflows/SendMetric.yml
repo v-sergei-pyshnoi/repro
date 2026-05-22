@@ -1,0 +1,18 @@
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Example Metrics Job
+
+    steps:
+
+      - uses: your-org/datadog-workflow-metrics@v1
+        with:
+          datadog-api-key: ${{ secrets.DATADOG_API_KEY }}
+
+      - name: Reproduce snap install issue
+        run: |
+          time sudo snap install --color=never --unicode=never hello-world
+          sleep 10
