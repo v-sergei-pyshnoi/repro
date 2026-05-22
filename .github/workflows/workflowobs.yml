@@ -33,40 +33,35 @@ jobs:
               "repos/$REPO/actions/workflows/$workflow/runs?per_page=10" \
               > runs.json
 
-            jq -c '.workflow_runs[]' runs.json | while read -r run; do
-              RUN_ID=$(echo "$run" | jq -r '.id')
-              STATUS=$(echo "$run" | jq -r '.conclusion')
+            DURATION=$((END_EPOCH - START_EPOCH))
 
-              START=$(echo "$run" | jq -r '.run_started_at')
-              END=$(echo "$run" | jq -r '.updated_at')
-
-              START_EPOCH=$(date -d "$START" +%s)
-              END_EPOCH=$(date -d "$END" +%s)
-
-              DURATION=$((END_EPOCH - START_EPOCH))
-
-              cat > payload.json <<EOF
-              {
-                "series": [
+            jq -n \
+              --arg repo "$REPO" \
+              --arg workflow "$workflow" \
+              --arg status "$STATUS" \
+              --arg run_id "$RUN_ID" \
+              --argjson ts "$START_EPOCH" \
+              --argjson value "$DURATION" \
+              '{
+                series: [
                   {
-                    "metric": "github.actions.workflow",
-                    "type": 3,
-                    "points": [
+                    metric: "github.actions.workflow",
+                    type: 3,
+                    points: [
                       {
-                        "timestamp": $START_EPOCH,
-                        "value": $DURATION
+                        timestamp: $ts,
+                        value: $value
                       }
                     ],
-                    "tags": [
-                      "repo:$REPO",
-                      "workflow:$workflow",
-                      "status:$STATUS",
-                      "run_id:$RUN_ID"
+                    tags: [
+                      ("repo:" + $repo),
+                      ("workflow:" + $workflow),
+                      ("status:" + $status),
+                      ("run_id:" + $run_id)
                     ]
                   }
                 ]
-              }
-              EOF
+              }' > payload.json
 
               curl -s \
                 -X POST \
