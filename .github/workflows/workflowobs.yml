@@ -3,12 +3,16 @@ name: Workflow Observability
 on:
   workflow_dispatch:
 
-
 jobs:
   collect:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          gh --version
 
       - name: Collect workflow metrics
         env:
@@ -16,6 +20,8 @@ jobs:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           REPO: v-sergei-pyshnoi/repro
         run: |
+          set -euo pipefail
+
           workflows=(
             "SendMetric.yml"
           )
@@ -24,11 +30,10 @@ jobs:
             echo "Processing $workflow"
 
             gh api \
-              repos/$REPO/actions/workflows/$workflow/runs \
-              --paginate \
-              -q '.workflow_runs[:10]' > runs.json
+              "repos/$REPO/actions/workflows/$workflow/runs?per_page=10" \
+              > runs.json
 
-            jq -c '.[]' runs.json | while read run; do
+            jq -c '.workflow_runs[]' runs.json | while read -r run; do
               RUN_ID=$(echo "$run" | jq -r '.id')
               STATUS=$(echo "$run" | jq -r '.conclusion')
 
@@ -40,15 +45,17 @@ jobs:
 
               DURATION=$((END_EPOCH - START_EPOCH))
 
-
-              cat <<EOF > payload.json
+              cat > payload.json <<EOF
               {
                 "series": [
                   {
                     "metric": "github.actions.workflow",
                     "type": 3,
                     "points": [
-                      {"timestamp": $START_EPOCH, "value": $DURATION}
+                      {
+                        "timestamp": $START_EPOCH,
+                        "value": $DURATION
+                      }
                     ],
                     "tags": [
                       "repo:$REPO",
