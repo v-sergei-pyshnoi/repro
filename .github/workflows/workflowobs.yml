@@ -11,7 +11,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq
+          sudo apt-get install -y jq gh
           gh --version
 
       - name: Collect workflow metrics
@@ -33,35 +33,45 @@ jobs:
               "repos/$REPO/actions/workflows/$workflow/runs?per_page=10" \
               > runs.json
 
-            DURATION=$((END_EPOCH - START_EPOCH))
+            jq -c '.workflow_runs[]' runs.json | while read -r run; do
+              RUN_ID=$(echo "$run" | jq -r '.id')
+              STATUS=$(echo "$run" | jq -r '.conclusion // "unknown"')
 
-            jq -n \
-              --arg repo "$REPO" \
-              --arg workflow "$workflow" \
-              --arg status "$STATUS" \
-              --arg run_id "$RUN_ID" \
-              --argjson ts "$START_EPOCH" \
-              --argjson value "$DURATION" \
-              '{
-                series: [
-                  {
-                    metric: "github.actions.workflow",
-                    type: 3,
-                    points: [
-                      {
-                        timestamp: $ts,
-                        value: $value
-                      }
-                    ],
-                    tags: [
-                      ("repo:" + $repo),
-                      ("workflow:" + $workflow),
-                      ("status:" + $status),
-                      ("run_id:" + $run_id)
-                    ]
-                  }
-                ]
-              }' > payload.json
+              START=$(echo "$run" | jq -r '.run_started_at')
+              END=$(echo "$run" | jq -r '.updated_at')
+
+              START_EPOCH=$(date -d "$START" +%s)
+              END_EPOCH=$(date -d "$END" +%s)
+
+              DURATION=$((END_EPOCH - START_EPOCH))
+
+              jq -n \
+                --arg repo "$REPO" \
+                --arg workflow "$workflow" \
+                --arg status "$STATUS" \
+                --arg run_id "$RUN_ID" \
+                --argjson timestamp "$START_EPOCH" \
+                --argjson value "$DURATION" \
+                '{
+                  series: [
+                    {
+                      metric: "github.actions.workflow",
+                      type: 3,
+                      points: [
+                        {
+                          timestamp: $timestamp,
+                          value: $value
+                        }
+                      ],
+                      tags: [
+                        ("repo:" + $repo),
+                        ("workflow:" + $workflow),
+                        ("status:" + $status),
+                        ("run_id:" + $run_id)
+                      ]
+                    }
+                  ]
+                }' > payload.json
 
               curl -s \
                 -X POST \
