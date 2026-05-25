@@ -13,4 +13,4 @@ jobs:
       - name: Repro on host
         id: host_repro
         run: |
-          npm install -g npm@latest
+         sudo npm install -g npm@latest
