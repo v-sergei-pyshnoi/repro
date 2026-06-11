@@ -1,4 +1,4 @@
-name: Repro perf record on Linux ARM
+name: Repro perf record on Linux x64 vs ARM
 
 on:
   workflow_dispatch:
