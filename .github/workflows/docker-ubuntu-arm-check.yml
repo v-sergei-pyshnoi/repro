@@ -1,0 +1,26 @@
+name: Docker check on Ubuntu ARM
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  docker-check:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04-arm
+            ubuntu: "22.04"
+          - runner: ubuntu-24.04-arm
+            ubuntu: "24.04"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Show Docker info
+        run: |
+          docker version
+          docker info
+
+      - name: Run Ubuntu ARM container
+        run: |
+          docker run --rm ubuntu:${{ matrix.ubuntu }} uname -m
