@@ -68,6 +68,7 @@ jobs:
           set -euxo pipefail
 
           sudo perf record -g -e cycles -a -o perf.data sleep 5
+          sudo chown "$(id -u):$(id -g)" perf.data
           ls -lah perf.data
 
       - name: Inspect perf output
