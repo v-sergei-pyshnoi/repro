@@ -3,6 +3,8 @@ name: Docker check on Ubuntu ARM
 on:
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   docker-check:
     runs-on: ubuntu-24.04-arm
