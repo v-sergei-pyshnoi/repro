@@ -39,6 +39,15 @@ jobs:
           - 20
 
     steps:
+      - name: Verify CPU model
+        shell: bash
+        run: |
+          lscpu_output="$(LC_ALL=C lscpu)"
+          echo "$lscpu_output"
+          if ! grep -Eq '^[[:space:]]*Model name:[[:space:]]+Neoverse-N2$' <<<"$lscpu_output"; then
+            echo "Expected lscpu to report 'Model name: Neoverse-N2'"
+            exit 1
+          fi
       - name: Apt update
         run: sudo apt update
       - name: Install perf
