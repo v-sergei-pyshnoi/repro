@@ -3,6 +3,9 @@ name: Repro perf record on Linux ARM
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   repro:
     name: perf record / ${{ matrix.runner }}
