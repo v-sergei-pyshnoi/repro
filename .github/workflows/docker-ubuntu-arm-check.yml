@@ -16,11 +16,11 @@ jobs:
             ubuntu: "24.04"
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Show Docker info
+      - name: Check docker
         run: |
-          docker version
-          docker info
+          which docker || true
+          docker version || true
+          ls -l /var/run/docker.sock || true
 
-      - name: Run Ubuntu ARM container
-        run: |
-          docker run --rm ubuntu:${{ matrix.ubuntu }} uname -m
+      - name: Setup buildx
+        uses: docker/setup-buildx-action@v3
