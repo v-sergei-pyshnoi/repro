@@ -1,4 +1,4 @@
-name: Repro perf record on Linux x64 vs ARM
+name: Repro perf record on Linux ARM
 
 on:
   workflow_dispatch:
@@ -14,95 +14,19 @@ jobs:
       fail-fast: false
       matrix:
         runner:
-          - ubuntu-24.04
           - ubuntu-24.04-arm
           - ubuntu-22.04-arm
 
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Print runner and image info
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          echo "Runner OS: ${{ runner.os }}"
-          echo "Runner arch: ${{ runner.arch }}"
-          echo "ImageOS=${ImageOS:-}"
-          echo "ImageVersion=${ImageVersion:-}"
-          uname -a
-          lscpu
-          cat /etc/os-release
-
-      - name: Install perf tools
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          sudo apt-get update
-
-          if apt-cache show "linux-tools-$(uname -r)" >/dev/null 2>&1; then
-            sudo apt-get install -y "linux-tools-$(uname -r)"
-          else
-            sudo apt-get install -y linux-tools-generic
-          fi
-
-          if ! command -v perf >/dev/null 2>&1; then
-            perf_path="$(find /usr/lib/linux-tools -name perf -type f | sort | tail -n 1)"
-            sudo ln -sf "${perf_path}" /usr/local/bin/perf
-          fi
-
-          perf --version
-
-      - name: Enable perf access
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          sudo sysctl kernel.perf_event_paranoid=1
-          sudo sysctl kernel.kptr_restrict=0
-
-      - name: Run repro command
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          sudo perf record -g -e cycles -a -o perf.data sleep 5
-          sudo chown "$(id -u):$(id -g)" perf.data
-          ls -lah perf.data
-
-      - name: Inspect perf output
-        id: inspect
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          sudo perf script -i perf.data 2>&1 | tee perf.script.txt || true
-          sudo perf report --stdio --percent-limit 0 -i perf.data 2>&1 | tee perf.report.txt || true
-
-          sample_lines="$(awk 'NF && $1 !~ /^#/' perf.script.txt | wc -l | tr -d ' ')"
-          echo "sample_lines=${sample_lines}" | tee perf.summary.txt
-
-          if grep -q "has no samples" perf.report.txt || [ "${sample_lines}" = "0" ]; then
-            echo "has_samples=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_samples=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload perf artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: perf-14091-${{ matrix.runner }}
-          path: |
-            perf.data
-            perf.script.txt
-            perf.report.txt
-            perf.summary.txt
-
-      - name: Fail when no samples were collected
-        if: steps.inspect.outputs.has_samples != 'true'
-        shell: bash
-        run: |
-          echo "::error::perf collected no samples on ${{ matrix.runner }}. See uploaded artifacts."
-          exit 1
+      - name: Install perf
+        run: sudo apt-get install linux-tools-generic
+      - name: Enable perf event paranoid flag
+        run: sudo sysctl kernel.perf_event_paranoid=1
+      - name: Set Kernel KPTR  Restriction
+        run: sudo sysctl kernel.kptr_restrict=0
+      - name: Run perf command with -a
+        run:  sudo perf record -g -e cycles -a -o perf.data sleep 5
+      - name: Run ls
+        run: ls -la
+      - name: View perf output
+        run: sudo perf script -i perf.data
