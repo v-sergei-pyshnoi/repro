@@ -39,6 +39,8 @@ jobs:
           - 20
 
     steps:
+      - name: Apt update
+        run: sudo apt update
       - name: Install perf
         run: sudo apt-get install linux-tools-generic
       - name: Enable perf event paranoid flag
