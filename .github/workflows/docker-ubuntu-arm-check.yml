@@ -1,0 +1,17 @@
+name: Docker check on Ubuntu ARM
+
+on:
+  workflow_dispatch:
+
+jobs:
+  docker-check:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Show Docker info
+        run: |
+          docker version
+          docker info
+
+      - name: Run Ubuntu ARM container
+        run: |
+          docker run --rm ubuntu:24.04 uname -m
