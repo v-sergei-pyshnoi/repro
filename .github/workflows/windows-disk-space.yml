@@ -83,7 +83,7 @@ jobs:
           $androidSdkPath = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { 'C:\Android\android-sdk' }
 
           $directoryTargets = @(
-            @{ Software = 'Visual Studio 2022 Enterprise'; Path = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' }
+            @{ Software = 'Visual Studio Enterprise'; Path = 'C:\Program Files\Microsoft Visual Studio\*\Enterprise' }
             @{ Software = 'Windows Kits'; Path = 'C:\Program Files (x86)\Windows Kits' }
             @{ Software = 'Hosted tool cache'; Path = $toolCachePath }
             @{ Software = '.NET SDKs'; Path = 'C:\Program Files\dotnet' }
@@ -109,11 +109,18 @@ jobs:
                 continue
               }
 
+              $softwareName = if ($target.Software -eq 'Visual Studio Enterprise') {
+                $visualStudioVersion = [System.IO.Path]::GetFileName((Split-Path -Path $resolvedPath.Path -Parent))
+                '{0} ({1})' -f $target.Software, $visualStudioVersion
+              } else {
+                $target.Software
+              }
+
               [pscustomobject]@{
                 runner_label  = $runnerLabel
                 image_os      = $imageOs
                 image_version = $imageVersion
-                software      = $target.Software
+                software      = $softwareName
                 display_version = ''
                 source        = 'directory'
                 path          = $resolvedPath.Path
