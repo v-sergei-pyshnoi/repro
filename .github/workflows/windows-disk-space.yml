@@ -47,7 +47,10 @@ jobs:
             )
 
             if (-not $Rows -or $Rows.Count -eq 0) {
-              return @('| No data |', '| --- |')
+              $header = '| ' + ($Columns -join ' | ') + ' |'
+              $separator = '| ' + (($Columns | ForEach-Object { '---' }) -join ' | ') + ' |'
+              $empty = '| ' + (($Columns | ForEach-Object { if ($_ -eq $Columns[0]) { 'No data' } else { '' } }) -join ' | ') + ' |'
+              return @($header, $separator, $empty)
             }
 
             $header = '| ' + (($Columns | ForEach-Object { $_ -replace '\|', '\|' }) -join ' | ') + ' |'
@@ -96,7 +99,7 @@ jobs:
             @{ Software = 'Strawberry Perl'; Path = 'C:\Strawberry' }
           )
 
-          $directoryResults = foreach ($target in $directoryTargets) {
+          $directoryResults = @(foreach ($target in $directoryTargets) {
             foreach ($resolvedPath in @(Resolve-Path -Path $target.Path -ErrorAction SilentlyContinue)) {
               $sizeBytes = Get-DirectorySizeBytes -Path $resolvedPath.Path
               if ($null -eq $sizeBytes) {
@@ -114,13 +117,13 @@ jobs:
                 size_gb       = [math]::Round($sizeBytes / 1GB, 2)
               }
             }
-          }
+          })
 
           $registryEntries = Get-ItemProperty `
             -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' `
             -ErrorAction SilentlyContinue
 
-          $registryResults = $registryEntries |
+          $registryResults = @($registryEntries |
             Where-Object { $_.DisplayName -and $_.EstimatedSize -and [int64]$_.EstimatedSize -gt 0 } |
             Group-Object DisplayName |
             ForEach-Object {
@@ -138,7 +141,7 @@ jobs:
                 size_gb       = [math]::Round($sizeBytes / 1GB, 2)
               }
             } |
-            Sort-Object size_bytes -Descending
+            Sort-Object size_bytes -Descending)
 
           $allResults = @($directoryResults + $registryResults) | Sort-Object size_bytes -Descending
           $topOverall = $allResults | Select-Object -First 25
@@ -222,9 +225,11 @@ jobs:
           path: artifacts
 
       - name: Build combined summary
-        shell: python
+        shell: bash
         run: |
+          python <<'PY'
           import csv
+          import os
           import pathlib
 
           root = pathlib.Path("artifacts")
@@ -244,7 +249,11 @@ jobs:
 
           def markdown_table(items, columns):
               if not items:
-                  return ["| No data |", "| --- |"]
+                  return [
+                      "| " + " | ".join(columns) + " |",
+                      "| " + " | ".join(["---"] * len(columns)) + " |",
+                      "| " + " | ".join(["No data"] + [""] * (len(columns) - 1)) + " |",
+                  ]
 
               lines = [
                   "| " + " | ".join(columns) + " |",
@@ -345,8 +354,9 @@ jobs:
           (out_dir / "summary.md").write_text(summary_text, encoding="utf-8")
 
           print(summary_text)
-          with pathlib.Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+          with pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
               handle.write(summary_text)
+          PY
 
       - name: Upload combined artifact
         uses: actions/upload-artifact@v4
