@@ -7,14 +7,16 @@ permissions: {}
 
 jobs:
   collect:
-    name: Collect software sizes / ${{ matrix.runner }}
+    name: Collect software sizes / ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - windows-latest
-          - windows-2025
+        include:
+          - label: windows-2025
+            runner: windows-2025
+          - label: windows-2025-vs2026
+            runner: windows-2025-vs2026
 
     steps:
       - name: Collect software sizes
@@ -74,7 +76,7 @@ jobs:
             return $lines
           }
 
-          $runnerLabel = '${{ matrix.runner }}'
+          $runnerLabel = '${{ matrix.label }}'
           $imageOs = $env:ImageOS
           $imageVersion = $env:ImageVersion
           $toolCachePath = if ($env:RUNNER_TOOL_CACHE) { $env:RUNNER_TOOL_CACHE } else { 'C:\hostedtoolcache\windows' }
@@ -95,7 +97,6 @@ jobs:
             @{ Software = 'Chrome'; Path = 'C:\Program Files\Google\Chrome' }
             @{ Software = 'Edge'; Path = 'C:\Program Files (x86)\Microsoft\Edge' }
             @{ Software = 'Rust'; Path = 'C:\Users\runneradmin\.cargo' }
-            @{ Software = 'Ruby'; Path = 'C:\Ruby*' }
             @{ Software = 'MSYS2'; Path = 'C:\msys64' }
             @{ Software = 'Chocolatey'; Path = 'C:\ProgramData\chocolatey' }
             @{ Software = 'Strawberry Perl'; Path = 'C:\Strawberry' }
@@ -113,6 +114,7 @@ jobs:
                 image_os      = $imageOs
                 image_version = $imageVersion
                 software      = $target.Software
+                display_version = ''
                 source        = 'directory'
                 path          = $resolvedPath.Path
                 size_bytes    = $sizeBytes
@@ -127,7 +129,7 @@ jobs:
 
           $registryResults = @($registryEntries |
             Where-Object { $_.DisplayName -and $_.EstimatedSize -and [int64]$_.EstimatedSize -gt 0 } |
-            Group-Object DisplayName |
+            Group-Object { '{0}|{1}' -f $_.DisplayName, $_.DisplayVersion } |
             ForEach-Object {
               $entry = $_.Group | Sort-Object {[int64]$_.EstimatedSize} -Descending | Select-Object -First 1
               $sizeBytes = [int64]$entry.EstimatedSize * 1KB
@@ -137,6 +139,7 @@ jobs:
                 image_os      = $imageOs
                 image_version = $imageVersion
                 software      = $entry.DisplayName
+                display_version = $entry.DisplayVersion
                 source        = 'registry'
                 path          = $entry.InstallLocation
                 size_bytes    = $sizeBytes
@@ -189,10 +192,11 @@ jobs:
           $summaryLines += Convert-ToMarkdownTable -Rows ($topRegistry | ForEach-Object {
             [pscustomobject]@{
               Software = $_.software
+              Version = $_.display_version
               'Path' = $_.path
               'Size (GB)' = $_.size_gb
             }
-          }) -Columns @('Software', 'Path', 'Size (GB)')
+          }) -Columns @('Software', 'Version', 'Path', 'Size (GB)')
           $summaryLines += ''
           $summaryLines += '## Largest entries overall'
           $summaryLines += ''
@@ -200,10 +204,11 @@ jobs:
             [pscustomobject]@{
               Source = $_.source
               Software = $_.software
+              Version = $_.display_version
               'Path' = $_.path
               'Size (GB)' = $_.size_gb
             }
-          }) -Columns @('Source', 'Software', 'Path', 'Size (GB)')
+          }) -Columns @('Source', 'Software', 'Version', 'Path', 'Size (GB)')
 
           $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
           Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
@@ -211,7 +216,7 @@ jobs:
       - name: Upload runner artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-software-size-${{ matrix.runner }}
+          name: windows-software-size-${{ matrix.label }}
           path: ${{ runner.temp }}/windows-software-size-report
 
   summarize:
@@ -293,12 +298,13 @@ jobs:
                   {
                       "Source": row["source"],
                       "Software": row["software"],
+                      "Version": row.get("display_version", ""),
                       "Path": row["path"],
                       "Size (GB)": row["size_gb"],
                   }
                   for row in runner_rows[:25]
               ]
-              summary_lines.extend(markdown_table(top_rows, ["Source", "Software", "Path", "Size (GB)"]))
+              summary_lines.extend(markdown_table(top_rows, ["Source", "Software", "Version", "Path", "Size (GB)"]))
               summary_lines.append("")
 
           directory_rows = [row for row in rows if row["source"] == "directory"]
@@ -343,6 +349,7 @@ jobs:
                       "image_os",
                       "image_version",
                       "software",
+                      "display_version",
                       "source",
                       "path",
                       "size_bytes",
