@@ -1,18 +1,355 @@
-name: Windows Free Disk Space Check
+name: Windows 2025 software disk usage
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
 
 jobs:
-  check-disk-space:
+  collect:
+    name: Collect software sizes / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, windows-2022, windows-2025]
-    runs-on: ${{ matrix.os }}
+        runner:
+          - windows-latest
+          - windows-2025
+
     steps:
-      - name: Check free disk space
+      - name: Collect software sizes
         shell: pwsh
         run: |
-          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{Name='Used(GB)';Expression={[math]::Round($_.Used/1GB,2)}}, @{Name='Free(GB)';Expression={[math]::Round($_.Free/1GB,2)}}, @{Name='Total(GB)';Expression={[math]::Round(($_.Used+$_.Free)/1GB,2)}}
+          $ErrorActionPreference = 'Stop'
+          $reportDir = Join-Path $env:RUNNER_TEMP 'windows-software-size-report'
+          New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+
+          function Get-DirectorySizeBytes {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string]$Path
+            )
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return $null
+            }
+
+            $measure = Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+              Measure-Object -Property Length -Sum
+
+            return [int64]($measure.Sum ?? 0)
+          }
+
+          function Convert-ToMarkdownTable {
+            param(
+              [Parameter(Mandatory = $true)]
+              [array]$Rows,
+              [Parameter(Mandatory = $true)]
+              [string[]]$Columns
+            )
+
+            if (-not $Rows -or $Rows.Count -eq 0) {
+              return @('| No data |', '| --- |')
+            }
+
+            $header = '| ' + (($Columns | ForEach-Object { $_ -replace '\|', '\|' }) -join ' | ') + ' |'
+            $separator = '| ' + (($Columns | ForEach-Object { '---' }) -join ' | ') + ' |'
+            $lines = @($header, $separator)
+
+            foreach ($row in $Rows) {
+              $cells = foreach ($column in $Columns) {
+                $value = $row.$column
+                if ($null -eq $value) {
+                  ''
+                } else {
+                  [string]$value -replace '\|', '\|'
+                }
+              }
+              $lines += '| ' + ($cells -join ' | ') + ' |'
+            }
+
+            return $lines
+          }
+
+          $runnerLabel = '${{ matrix.runner }}'
+          $imageOs = $env:ImageOS
+          $imageVersion = $env:ImageVersion
+          $toolCachePath = if ($env:RUNNER_TOOL_CACHE) { $env:RUNNER_TOOL_CACHE } else { 'C:\hostedtoolcache\windows' }
+          $androidSdkPath = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { 'C:\Android\android-sdk' }
+
+          $directoryTargets = @(
+            @{ Software = 'Visual Studio 2022 Enterprise'; Path = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' }
+            @{ Software = 'Windows Kits'; Path = 'C:\Program Files (x86)\Windows Kits' }
+            @{ Software = 'Hosted tool cache'; Path = $toolCachePath }
+            @{ Software = '.NET SDKs'; Path = 'C:\Program Files\dotnet' }
+            @{ Software = 'Node.js'; Path = 'C:\Program Files\nodejs' }
+            @{ Software = 'Python'; Path = 'C:\hostedtoolcache\windows\Python' }
+            @{ Software = 'Java'; Path = 'C:\hostedtoolcache\windows\Java' }
+            @{ Software = 'Android SDK'; Path = $androidSdkPath }
+            @{ Software = 'LLVM'; Path = 'C:\Program Files\LLVM' }
+            @{ Software = 'Git'; Path = 'C:\Program Files\Git' }
+            @{ Software = 'Go'; Path = 'C:\Program Files\Go' }
+            @{ Software = 'Chrome'; Path = 'C:\Program Files\Google\Chrome' }
+            @{ Software = 'Edge'; Path = 'C:\Program Files (x86)\Microsoft\Edge' }
+            @{ Software = 'Rust'; Path = 'C:\Users\runneradmin\.cargo' }
+            @{ Software = 'Ruby'; Path = 'C:\Ruby*' }
+            @{ Software = 'MSYS2'; Path = 'C:\msys64' }
+            @{ Software = 'Chocolatey'; Path = 'C:\ProgramData\chocolatey' }
+            @{ Software = 'Strawberry Perl'; Path = 'C:\Strawberry' }
+          )
+
+          $directoryResults = foreach ($target in $directoryTargets) {
+            foreach ($resolvedPath in @(Resolve-Path -Path $target.Path -ErrorAction SilentlyContinue)) {
+              $sizeBytes = Get-DirectorySizeBytes -Path $resolvedPath.Path
+              if ($null -eq $sizeBytes) {
+                continue
+              }
+
+              [pscustomobject]@{
+                runner_label  = $runnerLabel
+                image_os      = $imageOs
+                image_version = $imageVersion
+                software      = $target.Software
+                source        = 'directory'
+                path          = $resolvedPath.Path
+                size_bytes    = $sizeBytes
+                size_gb       = [math]::Round($sizeBytes / 1GB, 2)
+              }
+            }
+          }
+
+          $registryEntries = Get-ItemProperty `
+            -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' `
+            -ErrorAction SilentlyContinue
+
+          $registryResults = $registryEntries |
+            Where-Object { $_.DisplayName -and $_.EstimatedSize -and [int64]$_.EstimatedSize -gt 0 } |
+            Group-Object DisplayName |
+            ForEach-Object {
+              $entry = $_.Group | Sort-Object {[int64]$_.EstimatedSize} -Descending | Select-Object -First 1
+              $sizeBytes = [int64]$entry.EstimatedSize * 1KB
+
+              [pscustomobject]@{
+                runner_label  = $runnerLabel
+                image_os      = $imageOs
+                image_version = $imageVersion
+                software      = $entry.DisplayName
+                source        = 'registry'
+                path          = $entry.InstallLocation
+                size_bytes    = $sizeBytes
+                size_gb       = [math]::Round($sizeBytes / 1GB, 2)
+              }
+            } |
+            Sort-Object size_bytes -Descending
+
+          $allResults = @($directoryResults + $registryResults) | Sort-Object size_bytes -Descending
+          $topOverall = $allResults | Select-Object -First 25
+          $topRegistry = $registryResults | Select-Object -First 20
+
+          $directoryCsv = Join-Path $reportDir 'directory-software.csv'
+          $registryCsv = Join-Path $reportDir 'registry-software.csv'
+          $allCsv = Join-Path $reportDir 'all-software.csv'
+          $allJson = Join-Path $reportDir 'all-software.json'
+          $summaryPath = Join-Path $reportDir 'summary.md'
+          $systemInfoPath = Join-Path $reportDir 'system-info.txt'
+
+          $directoryResults | Sort-Object size_bytes -Descending | Export-Csv -Path $directoryCsv -NoTypeInformation -Encoding UTF8
+          $registryResults | Export-Csv -Path $registryCsv -NoTypeInformation -Encoding UTF8
+          $allResults | Export-Csv -Path $allCsv -NoTypeInformation -Encoding UTF8
+          $allResults | ConvertTo-Json -Depth 4 | Set-Content -Path $allJson -Encoding UTF8
+
+          @(
+            "runner_label=$runnerLabel"
+            "image_os=$imageOs"
+            "image_version=$imageVersion"
+            "computer_name=$env:COMPUTERNAME"
+          ) | Set-Content -Path $systemInfoPath -Encoding UTF8
+
+          $summaryLines = @()
+          $summaryLines += "# $runnerLabel"
+          $summaryLines += ''
+          $summaryLines += "* Image OS: $imageOs"
+          $summaryLines += "* Image Version: $imageVersion"
+          $summaryLines += ''
+          $summaryLines += '## Largest tracked software directories'
+          $summaryLines += ''
+          $summaryLines += Convert-ToMarkdownTable -Rows ($directoryResults | Sort-Object size_bytes -Descending | Select-Object -First 20 | ForEach-Object {
+            [pscustomobject]@{
+              Software = $_.software
+              'Path' = $_.path
+              'Size (GB)' = $_.size_gb
+            }
+          }) -Columns @('Software', 'Path', 'Size (GB)')
+          $summaryLines += ''
+          $summaryLines += '## Largest installed applications from registry'
+          $summaryLines += ''
+          $summaryLines += Convert-ToMarkdownTable -Rows ($topRegistry | ForEach-Object {
+            [pscustomobject]@{
+              Software = $_.software
+              'Path' = $_.path
+              'Size (GB)' = $_.size_gb
+            }
+          }) -Columns @('Software', 'Path', 'Size (GB)')
+          $summaryLines += ''
+          $summaryLines += '## Largest entries overall'
+          $summaryLines += ''
+          $summaryLines += Convert-ToMarkdownTable -Rows ($topOverall | ForEach-Object {
+            [pscustomobject]@{
+              Source = $_.source
+              Software = $_.software
+              'Path' = $_.path
+              'Size (GB)' = $_.size_gb
+            }
+          }) -Columns @('Source', 'Software', 'Path', 'Size (GB)')
+
+          $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
+          Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload runner artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-software-size-${{ matrix.runner }}
+          path: ${{ runner.temp }}/windows-software-size-report
+
+  summarize:
+    name: Summarize both Windows 2025 labels
+    runs-on: ubuntu-latest
+    needs: collect
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windows-software-size-*
+          path: artifacts
+
+      - name: Build combined summary
+        shell: python
+        run: |
+          import csv
+          import pathlib
+
+          root = pathlib.Path("artifacts")
+          out_dir = pathlib.Path("combined-report")
+          out_dir.mkdir(exist_ok=True)
+
+          rows = []
+          for csv_path in root.glob("**/all-software.csv"):
+              with csv_path.open(newline="", encoding="utf-8") as handle:
+                  rows.extend(list(csv.DictReader(handle)))
+
+          def parse_float(value):
+              try:
+                  return float(value)
+              except (TypeError, ValueError):
+                  return 0.0
+
+          def markdown_table(items, columns):
+              if not items:
+                  return ["| No data |", "| --- |"]
+
+              lines = [
+                  "| " + " | ".join(columns) + " |",
+                  "| " + " | ".join(["---"] * len(columns)) + " |",
+              ]
+              for item in items:
+                  cells = [str(item.get(column, "")).replace("|", "\\|") for column in columns]
+                  lines.append("| " + " | ".join(cells) + " |")
+              return lines
+
+          rows.sort(key=lambda row: (row["runner_label"], -parse_float(row["size_gb"]), row["software"]))
+
+          summary_lines = ["# Windows 2025 software disk usage", ""]
+
+          image_info = {}
+          for row in rows:
+              image_info.setdefault(
+                  row["runner_label"],
+                  {
+                      "image_os": row.get("image_os", ""),
+                      "image_version": row.get("image_version", ""),
+                  },
+              )
+
+          for runner in sorted(image_info):
+              info = image_info[runner]
+              summary_lines.append(f"## {runner}")
+              summary_lines.append("")
+              summary_lines.append(f"* Image OS: {info['image_os']}")
+              summary_lines.append(f"* Image Version: {info['image_version']}")
+              summary_lines.append("")
+
+              runner_rows = [row for row in rows if row["runner_label"] == runner]
+              top_rows = [
+                  {
+                      "Source": row["source"],
+                      "Software": row["software"],
+                      "Path": row["path"],
+                      "Size (GB)": row["size_gb"],
+                  }
+                  for row in runner_rows[:25]
+              ]
+              summary_lines.extend(markdown_table(top_rows, ["Source", "Software", "Path", "Size (GB)"]))
+              summary_lines.append("")
+
+          directory_rows = [row for row in rows if row["source"] == "directory"]
+          runners = sorted({row["runner_label"] for row in directory_rows})
+          comparison = {}
+          for row in directory_rows:
+              comparison.setdefault(row["software"], {})[row["runner_label"]] = row
+
+          if len(runners) == 2:
+              left, right = runners
+              summary_lines.append("## Directory comparison")
+              summary_lines.append("")
+              comparison_rows = []
+              for software, values in sorted(comparison.items()):
+                  left_size = parse_float(values.get(left, {}).get("size_gb"))
+                  right_size = parse_float(values.get(right, {}).get("size_gb"))
+                  if not left_size and not right_size:
+                      continue
+                  comparison_rows.append(
+                      {
+                          "Software": software,
+                          left: values.get(left, {}).get("size_gb", ""),
+                          right: values.get(right, {}).get("size_gb", ""),
+                          "Delta (GB)": f"{right_size - left_size:.2f}",
+                      }
+                  )
+
+              comparison_rows.sort(key=lambda row: abs(parse_float(row["Delta (GB)"])), reverse=True)
+              summary_lines.extend(markdown_table(comparison_rows, ["Software", left, right, "Delta (GB)"]))
+              summary_lines.append("")
+
+              with (out_dir / "directory-comparison.csv").open("w", newline="", encoding="utf-8") as handle:
+                  writer = csv.DictWriter(handle, fieldnames=["Software", left, right, "Delta (GB)"])
+                  writer.writeheader()
+                  writer.writerows(comparison_rows)
+
+          with (out_dir / "combined-software.csv").open("w", newline="", encoding="utf-8") as handle:
+              writer = csv.DictWriter(
+                  handle,
+                  fieldnames=[
+                      "runner_label",
+                      "image_os",
+                      "image_version",
+                      "software",
+                      "source",
+                      "path",
+                      "size_bytes",
+                      "size_gb",
+                  ],
+              )
+              writer.writeheader()
+              writer.writerows(rows)
+
+          summary_text = "\n".join(summary_lines) + "\n"
+          (out_dir / "summary.md").write_text(summary_text, encoding="utf-8")
+
+          print(summary_text)
+          with pathlib.Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write(summary_text)
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-software-size-combined
+          path: combined-report
