@@ -3,6 +3,8 @@ name: Windows 2025 software disk usage
 on:
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   collect:
     name: Collect software sizes / ${{ matrix.runner }}
@@ -53,7 +55,7 @@ jobs:
               return @($header, $separator, $empty)
             }
 
-            $header = '| ' + (($Columns | ForEach-Object { $_ -replace '\|', '\|' }) -join ' | ') + ' |'
+            $header = '| ' + (($Columns | ForEach-Object { $_ -replace '\|', '\\|' }) -join ' | ') + ' |'
             $separator = '| ' + (($Columns | ForEach-Object { '---' }) -join ' | ') + ' |'
             $lines = @($header, $separator)
 
@@ -63,7 +65,7 @@ jobs:
                 if ($null -eq $value) {
                   ''
                 } else {
-                  [string]$value -replace '\|', '\|'
+                  [string]$value -replace '\|', '\\|'
                 }
               }
               $lines += '| ' + ($cells -join ' | ') + ' |'
