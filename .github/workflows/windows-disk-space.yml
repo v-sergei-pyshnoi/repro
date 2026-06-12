@@ -76,11 +76,40 @@ jobs:
             return $lines
           }
 
+          function Find-FirstExistingPath {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string[]]$Candidates
+            )
+
+            foreach ($candidate in $Candidates) {
+              if (-not $candidate) {
+                continue
+              }
+
+              if (Test-Path -Path $candidate) {
+                return $candidate
+              }
+            }
+
+            return $null
+          }
+
           $runnerLabel = '${{ matrix.label }}'
           $imageOs = $env:ImageOS
           $imageVersion = $env:ImageVersion
-          $toolCachePath = if ($env:RUNNER_TOOL_CACHE) { $env:RUNNER_TOOL_CACHE } else { 'C:\hostedtoolcache\windows' }
-          $androidSdkPath = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { 'C:\Android\android-sdk' }
+          $toolCachePath = Find-FirstExistingPath -Candidates @(
+            $env:RUNNER_TOOL_CACHE
+            'C:\hostedtoolcache\windows'
+            'C:\hostedtoolcache'
+          )
+          $androidSdkPath = Find-FirstExistingPath -Candidates @(
+            $env:ANDROID_HOME
+            $env:ANDROID_SDK_ROOT
+            'C:\Android\android-sdk'
+            'C:\Android\Sdk'
+            'C:\Users\runneradmin\AppData\Local\Android\Sdk'
+          )
 
           $directoryTargets = @(
             @{ Software = 'Visual Studio Enterprise'; Path = 'C:\Program Files\Microsoft Visual Studio\*\Enterprise' }
