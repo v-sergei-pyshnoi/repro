@@ -1,0 +1,64 @@
+name: Go tool-cache cleanup test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  with-cleanup:
+    name: With tool-cache cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove Go versions <= 1.23 from tool-cache
+        shell: bash
+        run: |
+          TOOL_CACHE="${RUNNER_TOOL_CACHE}/go"
+          if [ -d "$TOOL_CACHE" ]; then
+            echo "Go versions in tool-cache before cleanup:"
+            ls "$TOOL_CACHE" || true
+            for dir in "$TOOL_CACHE"/*/; do
+              version=$(basename "$dir")
+              # Compare only the major.minor part (e.g. 1.23.x -> 1.23)
+              major=$(echo "$version" | cut -d. -f1)
+              minor=$(echo "$version" | cut -d. -f2)
+              if [ "$major" -lt 2 ] && [ "$minor" -le 23 ]; then
+                echo "Removing Go $version from tool-cache"
+                rm -rf "$dir"
+              fi
+            done
+            echo "Go versions in tool-cache after cleanup:"
+            ls "$TOOL_CACHE" || echo "(empty)"
+          else
+            echo "No Go tool-cache directory found at $TOOL_CACHE"
+          fi
+
+      - name: Setup Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Verify Go version
+        run: go version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: go test ./...
+
+  without-cleanup:
+    name: Without tool-cache cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Verify Go version
+        run: go version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: go test ./...
