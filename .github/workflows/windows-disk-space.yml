@@ -1,4 +1,4 @@
-name: Windows 2025 software disk usage
+name: Windows software disk usage
 
 on:
   workflow_dispatch:
@@ -13,10 +13,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - label: windows-2022
+            runner: windows-2022
           - label: windows-2025
             runner: windows-2025
           - label: windows-2025-vs2026
             runner: windows-2025-vs2026
+          - label: windows-11-arm
+            runner: windows-11-arm
+          - label: windows-11-vs2026-arm
+            runner: windows-11-vs2026-arm
 
     steps:
       - name: Collect software sizes
@@ -188,10 +194,16 @@ jobs:
           $topOverall = $allResults | Select-Object -First 25
           $topRegistry = $registryResults | Select-Object -First 20
 
+          $cDrive = Get-PSDrive -Name C
+          $diskTotalGB = [math]::Round(($cDrive.Used + $cDrive.Free) / 1GB, 2)
+          $diskUsedGB  = [math]::Round($cDrive.Used / 1GB, 2)
+          $diskFreeGB  = [math]::Round($cDrive.Free / 1GB, 2)
+
           $directoryCsv = Join-Path $reportDir 'directory-software.csv'
           $registryCsv = Join-Path $reportDir 'registry-software.csv'
           $allCsv = Join-Path $reportDir 'all-software.csv'
           $allJson = Join-Path $reportDir 'all-software.json'
+          $diskCsv = Join-Path $reportDir 'disk-space.csv'
           $summaryPath = Join-Path $reportDir 'summary.md'
           $systemInfoPath = Join-Path $reportDir 'system-info.txt'
 
@@ -199,6 +211,15 @@ jobs:
           $registryResults | Export-Csv -Path $registryCsv -NoTypeInformation -Encoding UTF8
           $allResults | Export-Csv -Path $allCsv -NoTypeInformation -Encoding UTF8
           $allResults | ConvertTo-Json -Depth 4 | Set-Content -Path $allJson -Encoding UTF8
+
+          [pscustomobject]@{
+            runner_label  = $runnerLabel
+            image_os      = $imageOs
+            image_version = $imageVersion
+            total_gb      = $diskTotalGB
+            used_gb       = $diskUsedGB
+            free_gb       = $diskFreeGB
+          } | Export-Csv -Path $diskCsv -NoTypeInformation -Encoding UTF8
 
           @(
             "runner_label=$runnerLabel"
@@ -212,6 +233,12 @@ jobs:
           $summaryLines += ''
           $summaryLines += "* Image OS: $imageOs"
           $summaryLines += "* Image Version: $imageVersion"
+          $summaryLines += ''
+          $summaryLines += '## Disk space (C:)'
+          $summaryLines += ''
+          $summaryLines += Convert-ToMarkdownTable -Rows @(
+            [pscustomobject]@{ 'Total (GB)' = $diskTotalGB; 'Used (GB)' = $diskUsedGB; 'Free (GB)' = $diskFreeGB }
+          ) -Columns @('Total (GB)', 'Used (GB)', 'Free (GB)')
           $summaryLines += ''
           $summaryLines += '## Largest tracked software directories'
           $summaryLines += ''
@@ -256,7 +283,7 @@ jobs:
           path: ${{ runner.temp }}/windows-software-size-report
 
   summarize:
-    name: Summarize both Windows 2025 labels
+    name: Summarize all Windows images
     runs-on: ubuntu-latest
     needs: collect
 
@@ -284,6 +311,11 @@ jobs:
               with csv_path.open(newline="", encoding="utf-8") as handle:
                   rows.extend(list(csv.DictReader(handle)))
 
+          disk_rows = []
+          for csv_path in root.glob("**/disk-space.csv"):
+              with csv_path.open(newline="", encoding="utf-8") as handle:
+                  disk_rows.extend(list(csv.DictReader(handle)))
+
           def parse_float(value):
               try:
                   return float(value)
@@ -308,8 +340,34 @@ jobs:
               return lines
 
           rows.sort(key=lambda row: (row["runner_label"], -parse_float(row["size_gb"]), row["software"]))
+          disk_rows.sort(key=lambda row: row["runner_label"])
 
-          summary_lines = ["# Windows 2025 software disk usage", ""]
+          runners_ordered = sorted({row["runner_label"] for row in rows})
+
+          summary_lines = ["# Windows software disk usage", ""]
+
+          # Disk space summary table across all runners
+          if disk_rows:
+              summary_lines.append("## Disk space summary (C: drive)")
+              summary_lines.append("")
+              disk_table_rows = [
+                  {
+                      "Runner": dr["runner_label"],
+                      "Image OS": dr.get("image_os", ""),
+                      "Image Version": dr.get("image_version", ""),
+                      "Total (GB)": dr["total_gb"],
+                      "Used (GB)": dr["used_gb"],
+                      "Free (GB)": dr["free_gb"],
+                  }
+                  for dr in sorted(disk_rows, key=lambda r: r["runner_label"])
+              ]
+              summary_lines.extend(markdown_table(disk_table_rows, ["Runner", "Image OS", "Image Version", "Total (GB)", "Used (GB)", "Free (GB)"]))
+              summary_lines.append("")
+
+              with (out_dir / "disk-space.csv").open("w", newline="", encoding="utf-8") as handle:
+                  writer = csv.DictWriter(handle, fieldnames=["runner_label", "image_os", "image_version", "total_gb", "used_gb", "free_gb"])
+                  writer.writeheader()
+                  writer.writerows(disk_rows)
 
           image_info = {}
           for row in rows:
@@ -321,7 +379,7 @@ jobs:
                   },
               )
 
-          for runner in sorted(image_info):
+          for runner in runners_ordered:
               info = image_info[runner]
               summary_lines.append(f"## {runner}")
               summary_lines.append("")
@@ -343,37 +401,35 @@ jobs:
               summary_lines.extend(markdown_table(top_rows, ["Source", "Software", "Version", "Path", "Size (GB)"]))
               summary_lines.append("")
 
+          # Directory comparison across all runners (pivot table)
           directory_rows = [row for row in rows if row["source"] == "directory"]
           runners = sorted({row["runner_label"] for row in directory_rows})
           comparison = {}
           for row in directory_rows:
               comparison.setdefault(row["software"], {})[row["runner_label"]] = row
 
-          if len(runners) == 2:
-              left, right = runners
-              summary_lines.append("## Directory comparison")
+          if len(runners) >= 2:
+              summary_lines.append("## Directory size comparison")
               summary_lines.append("")
               comparison_rows = []
               for software, values in sorted(comparison.items()):
-                  left_size = parse_float(values.get(left, {}).get("size_gb"))
-                  right_size = parse_float(values.get(right, {}).get("size_gb"))
-                  if not left_size and not right_size:
+                  sizes = {r: parse_float(values.get(r, {}).get("size_gb")) for r in runners}
+                  if not any(sizes.values()):
                       continue
-                  comparison_rows.append(
-                      {
-                          "Software": software,
-                          left: values.get(left, {}).get("size_gb", ""),
-                          right: values.get(right, {}).get("size_gb", ""),
-                          "Delta (GB)": f"{right_size - left_size:.2f}",
-                      }
-                  )
+                  row_dict = {"Software": software}
+                  for r in runners:
+                      row_dict[r] = values.get(r, {}).get("size_gb", "")
+                  max_size = max(sizes.values())
+                  min_size = min(sizes.values())
+                  row_dict["Max delta (GB)"] = f"{max_size - min_size:.2f}"
+                  comparison_rows.append(row_dict)
 
-              comparison_rows.sort(key=lambda row: abs(parse_float(row["Delta (GB)"])), reverse=True)
-              summary_lines.extend(markdown_table(comparison_rows, ["Software", left, right, "Delta (GB)"]))
+              comparison_rows.sort(key=lambda r: abs(parse_float(r["Max delta (GB)"])), reverse=True)
+              summary_lines.extend(markdown_table(comparison_rows, ["Software"] + runners + ["Max delta (GB)"]))
               summary_lines.append("")
 
               with (out_dir / "directory-comparison.csv").open("w", newline="", encoding="utf-8") as handle:
-                  writer = csv.DictWriter(handle, fieldnames=["Software", left, right, "Delta (GB)"])
+                  writer = csv.DictWriter(handle, fieldnames=["Software"] + runners + ["Max delta (GB)"])
                   writer.writeheader()
                   writer.writerows(comparison_rows)
 
