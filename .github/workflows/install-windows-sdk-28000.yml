@@ -1,0 +1,59 @@
+name: Install Windows SDK 28000
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install-sdk:
+    name: Install / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-2022
+          - windows-2025
+          - windows-2025-vs2026
+          - windows-11-arm
+          - windows-11-vs2026-arm
+
+    steps:
+      - name: Download Windows SDK 28000 installer
+        shell: pwsh
+        run: |
+          $installerPath = Join-Path $env:RUNNER_TEMP 'winsdksetup.exe'
+          Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/?linkid=2366211' -OutFile $installerPath
+          Write-Host "Downloaded installer to $installerPath"
+
+      - name: Install Windows SDK 28000
+        shell: pwsh
+        run: |
+          $installerPath = Join-Path $env:RUNNER_TEMP 'winsdksetup.exe'
+          $logPath = Join-Path $env:RUNNER_TEMP 'winsdksetup.log'
+          $process = Start-Process `
+            -FilePath $installerPath `
+            -ArgumentList '/features + /q /norestart /log', $logPath `
+            -Wait `
+            -PassThru
+          if (Test-Path $logPath) {
+            Get-Content $logPath | Write-Host
+          }
+          if ($process.ExitCode -ne 0) {
+            Write-Error "Windows SDK installer exited with code $($process.ExitCode)"
+            exit $process.ExitCode
+          }
+          Write-Host "Windows SDK 28000 installed successfully."
+
+      - name: Verify installation
+        shell: pwsh
+        run: |
+          $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10'
+          $sdkVersion = '10.0.28000.0'
+          $includeDir = Join-Path $sdkRoot "Include\$sdkVersion"
+          if (Test-Path $includeDir) {
+            Write-Host "Windows SDK $sdkVersion found at $includeDir"
+          } else {
+            Write-Warning "Windows SDK $sdkVersion include directory not found at $includeDir"
+            Get-ChildItem -Path (Join-Path $sdkRoot 'Include') -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty Name
+          }
