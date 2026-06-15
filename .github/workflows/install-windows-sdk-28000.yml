@@ -18,6 +18,11 @@ jobs:
           - windows-11-vs2026-arm
 
     steps:
+      - name: Check free disk space before installation
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}}, @{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}}, @{N='Total(GB)';E={[math]::Round(($_.Free+$_.Used)/1GB,2)}} | Format-Table -AutoSize
+
       - name: Download Windows SDK 28000 installer
         shell: pwsh
         run: |
@@ -43,6 +48,11 @@ jobs:
             exit $process.ExitCode
           }
           Write-Host "Windows SDK 28000 installed successfully."
+
+      - name: Check free disk space after installation
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}}, @{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}}, @{N='Total(GB)';E={[math]::Round(($_.Free+$_.Used)/1GB,2)}} | Format-Table -AutoSize
 
       - name: Verify installation
         shell: pwsh
