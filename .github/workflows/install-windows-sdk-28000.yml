@@ -18,6 +18,10 @@ jobs:
           - windows-11-vs2026-arm
 
     steps:
+      - name: Uninstall LLVM 20.1.8
+        shell: pwsh
+        run: choco uninstall llvm --version 20.1.8 -y
+
       - name: Check free disk space before installation
         shell: pwsh
         run: |
@@ -67,3 +71,7 @@ jobs:
             Get-ChildItem -Path (Join-Path $sdkRoot 'Include') -ErrorAction SilentlyContinue |
               Select-Object -ExpandProperty Name
           }
+
+      - name: Reinstall LLVM 20.1.8
+        shell: pwsh
+        run: choco install llvm --version 20.1.8 -y
