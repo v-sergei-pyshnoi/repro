@@ -139,6 +139,7 @@ jobs:
           )
 
           $directoryResults = @(foreach ($target in $directoryTargets) {
+            if (-not $target.Path) { continue }
             foreach ($resolvedPath in @(Resolve-Path -Path $target.Path -ErrorAction SilentlyContinue)) {
               $sizeBytes = Get-DirectorySizeBytes -Path $resolvedPath.Path
               if ($null -eq $sizeBytes) {
