@@ -23,17 +23,25 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $targetVersion = '14.6.0'
+          $installedAzModules = @(Get-InstalledModule -Name Az -AllVersions -ErrorAction SilentlyContinue)
 
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
 
-          Get-InstalledModule -Name Az -AllVersions -ErrorAction SilentlyContinue |
-            Where-Object Version -ne [version]$targetVersion |
-            ForEach-Object {
-              Write-Host "Removing Az $($_.Version)"
-              Uninstall-Module -Name Az -RequiredVersion $_.Version -Force -ErrorAction Stop
-            }
+          if ($installedAzModules.Count -gt 0) {
+            $installedAzModules |
+              Where-Object Version -ne [version]$targetVersion |
+              ForEach-Object {
+                Write-Host "Removing Az $($_.Version)"
+                Uninstall-Module -Name Az -RequiredVersion $_.Version -Force -ErrorAction Stop
+              }
+          }
 
-          Install-Module -Name Az -RequiredVersion $targetVersion -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
+          if (-not ($installedAzModules | Where-Object Version -eq [version]$targetVersion)) {
+            Install-Module -Name Az -RequiredVersion $targetVersion -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
+          } else {
+            Write-Host "Az $targetVersion is already installed"
+          }
+
           Import-Module Az -RequiredVersion $targetVersion -Force
 
           $loadedVersion = (Get-Module Az).Version.ToString()
