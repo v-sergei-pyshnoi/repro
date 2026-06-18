@@ -1,0 +1,52 @@
+name: Pin Az module 14.6.0 on Ubuntu 22.04
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  downgrade-az:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Show installed Az versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Module -ListAvailable -Name Az* |
+            Sort-Object Name, Version |
+            Format-Table Name, Version, Path
+
+      - name: Downgrade Az module to 14.6.0
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $targetVersion = '14.6.0'
+          $installedAzModules = @(Get-InstalledModule -Name Az -AllVersions -ErrorAction SilentlyContinue)
+
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+
+          if ($installedAzModules.Count -gt 0) {
+            $installedAzModules |
+              Where-Object Version -ne [version]$targetVersion |
+              ForEach-Object {
+                Write-Host "Removing Az $($_.Version)"
+                Uninstall-Module -Name Az -RequiredVersion $_.Version -Force -ErrorAction Stop
+              }
+          }
+
+          if (-not ($installedAzModules | Where-Object Version -eq [version]$targetVersion)) {
+            Install-Module -Name Az -RequiredVersion $targetVersion -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
+          } else {
+            Write-Host "Az $targetVersion is already installed"
+          }
+
+          Import-Module Az -RequiredVersion $targetVersion -Force
+
+          $loadedVersion = (Get-Module Az).Version.ToString()
+          if ($loadedVersion -ne $targetVersion) {
+            throw "Expected Az $targetVersion, got $loadedVersion"
+          }
+
+          Get-Module Az | Format-Table Name, Version, Path
