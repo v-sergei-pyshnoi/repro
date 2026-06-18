@@ -1,7 +1,9 @@
-name: Downgrade Az module on Ubuntu 22.04
+name: Pin Az module 14.6.0 on Ubuntu 22.04
 
 on:
   workflow_dispatch:
+
+permissions: {}
 
 jobs:
   downgrade-az:
@@ -27,7 +29,8 @@ jobs:
           Get-InstalledModule -Name Az -AllVersions -ErrorAction SilentlyContinue |
             Where-Object Version -ne [version]$targetVersion |
             ForEach-Object {
-              Uninstall-Module -Name Az -RequiredVersion $_.Version -Force -ErrorAction SilentlyContinue
+              Write-Host "Removing Az $($_.Version)"
+              Uninstall-Module -Name Az -RequiredVersion $_.Version -Force -ErrorAction Stop
             }
 
           Install-Module -Name Az -RequiredVersion $targetVersion -Scope CurrentUser -Repository PSGallery -Force -AllowClobber
