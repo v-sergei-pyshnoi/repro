@@ -62,8 +62,7 @@ jobs:
 
           function Format-DateTime {
             param(
-              [AllowNull()]
-              [datetime]$Value
+              [Nullable[datetime]]$Value
             )
 
             if ($null -eq $Value -or $Value -eq [datetime]::MinValue) {
@@ -120,8 +119,7 @@ jobs:
               [bool]$Enabled,
               [Parameter(Mandatory = $true)]
               [string]$State,
-              [AllowNull()]
-              [datetime]$NextRunTime
+              [Nullable[datetime]]$NextRunTime
             )
 
             return $Enabled -or $State -in @('Running', 'Ready', 'Queued') -or ($NextRunTime -and $NextRunTime -ne [datetime]::MinValue)
