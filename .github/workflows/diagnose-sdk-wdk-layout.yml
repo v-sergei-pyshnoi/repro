@@ -3,6 +3,8 @@ name: Diagnose SDK WDK layout
 on:
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   diagnose:
     name: Diagnose / ${{ matrix.runner }}
@@ -43,9 +45,25 @@ jobs:
               }
             } | Format-Table -AutoSize
 
+          $preferredSdkVersion = '10.0.26100.0'
+          $resolvedSdkVersion = if (Test-Path (Join-Path $sdkRoot "Include\$preferredSdkVersion")) {
+            $preferredSdkVersion
+          } else {
+            Get-ChildItem (Join-Path $sdkRoot 'Include') -Directory |
+              Sort-Object {
+                try { [version]$_.Name } catch { [version]'0.0' }
+              } -Descending |
+              Select-Object -ExpandProperty Name -First 1
+          }
+
+          [pscustomobject]@{
+            PreferredSdkVersion = $preferredSdkVersion
+            ResolvedSdkVersion = $resolvedSdkVersion
+          } | Format-Table -AutoSize
+
           foreach ($path in @(
-            'Include\10.0.26100.0\km\wdm.h',
-            'Include\10.0.26100.0\km\ntddk.h',
+            "Include\$resolvedSdkVersion\km\wdm.h",
+            "Include\$resolvedSdkVersion\km\ntddk.h",
             'Include\wdf\kmdf\1.33\wdf.h'
           )) {
             $full = Join-Path $sdkRoot $path
