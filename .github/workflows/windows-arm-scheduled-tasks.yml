@@ -248,8 +248,8 @@ jobs:
 
           # ── 2. ALL scheduled tasks whose path or name contains WSL ───────────
           $wslTasks = @(Get-ScheduledTask | Where-Object {
-            $_.TaskPath -match 'WSL|WindowsSubsystemForLinux' -or
-            $_.TaskName -match 'WSL|wsl'
+            $_.TaskPath -imatch 'WSL|WindowsSubsystemForLinux' -or
+            $_.TaskName -imatch 'WSL'
           })
 
           $wslTaskRows = foreach ($t in $wslTasks) {
@@ -290,7 +290,7 @@ jobs:
             if (-not $key) { continue }
             foreach ($valueName in $key.GetValueNames()) {
               $data = [string]$key.GetValue($valueName)
-              if ($data -match 'wsl' -or $valueName -match 'wsl') {
+              if ($data -imatch 'wsl' -or $valueName -imatch 'wsl') {
                 [pscustomobject]@{
                   runner_label = $runnerLabel
                   key_path     = $keyPath
@@ -445,7 +445,7 @@ jobs:
           # WSL info blobs (per runner)
           wsl_info_by_runner = {}
           for info_path in root.glob("**/wsl-info.json"):
-              runner_dir = info_path.parent.parent.name  # artifact dir name
+              runner_dir = info_path.parent.parent.name  # runner label from artifact download path
               try:
                   wsl_info_by_runner[runner_dir] = json.loads(info_path.read_text(encoding="utf-8"))
               except Exception:
