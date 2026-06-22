@@ -1,0 +1,53 @@
+name: Diagnose SDK WDK layout
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: Diagnose / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-2022
+          - windows-2025
+          - windows-2025-vs2026
+          - windows-11-arm
+          - windows-11-vs2026-arm
+
+    steps:
+      - shell: pwsh
+        run: |
+          "ImageOS=$env:ImageOS"
+          "ImageVersion=$env:ImageVersion"
+
+          Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+            Where-Object { $_.DisplayName -match 'Windows.*(SDK|WDK|Driver Kit|Software Development Kit|Driver Kit)' } |
+            Select-Object DisplayName, DisplayVersion |
+            Sort-Object DisplayName, DisplayVersion |
+            Format-Table -AutoSize
+
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+          Get-ChildItem (Join-Path $sdkRoot 'Include') -Directory |
+            Sort-Object Name |
+            ForEach-Object {
+              [pscustomobject]@{
+                Version = $_.Name
+                UmNtGdi = Test-Path (Join-Path $_.FullName 'um\ntgdi.h')
+                KmNtGdi = Test-Path (Join-Path $_.FullName 'km\ntgdi.h')
+                UmHeaderCount = @(Get-ChildItem (Join-Path $_.FullName 'um') -Filter '*.h' -ErrorAction SilentlyContinue).Count
+                KmHeaderCount = @(Get-ChildItem (Join-Path $_.FullName 'km') -Filter '*.h' -ErrorAction SilentlyContinue).Count
+              }
+            } | Format-Table -AutoSize
+
+          foreach ($path in @(
+            'Include\10.0.26100.0\km\wdm.h',
+            'Include\10.0.26100.0\km\ntddk.h',
+            'Include\wdf\kmdf\1.33\wdf.h'
+          )) {
+            $full = Join-Path $sdkRoot $path
+            [pscustomobject]@{ Path = $full; Exists = Test-Path $full }
+          } | Format-Table -AutoSize
