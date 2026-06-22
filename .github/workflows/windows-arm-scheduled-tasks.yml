@@ -217,6 +217,179 @@ jobs:
           $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
           Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
+      - name: Investigate WSL (issue 14264)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportDir = Join-Path $env:RUNNER_TEMP 'windows-arm-scheduled-tasks'
+
+          # ── 1. WSL version / status ──────────────────────────────────────────
+          $wslInfo = [ordered]@{}
+
+          $wslExe = (Get-Command wsl.exe -ErrorAction SilentlyContinue)?.Source
+          $wslInfo['wsl_exe_path'] = if ($wslExe) { $wslExe } else { 'NOT FOUND' }
+
+          foreach ($cmd in @('--version', '--status')) {
+            $key = 'wsl_' + ($cmd -replace '-', '')
+            try {
+              $out = & wsl.exe $cmd 2>&1
+              $wslInfo[$key] = ($out -join "`n").Trim()
+            } catch {
+              $wslInfo[$key] = "ERROR: $_"
+            }
+          }
+
+          try {
+            $out = & wsl.exe --list --verbose 2>&1
+            $wslInfo['wsl_list_verbose'] = ($out -join "`n").Trim()
+          } catch {
+            $wslInfo['wsl_list_verbose'] = "ERROR: $_"
+          }
+
+          # ── 2. ALL scheduled tasks whose path or name contains WSL ───────────
+          $wslTasks = @(Get-ScheduledTask | Where-Object {
+            $_.TaskPath -match 'WSL|WindowsSubsystemForLinux' -or
+            $_.TaskName -match 'WSL|wsl'
+          })
+
+          $wslTaskRows = foreach ($t in $wslTasks) {
+            $info = $null
+            try { $info = Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction SilentlyContinue } catch {}
+            $actions = ($t.Actions | ForEach-Object {
+              if ($_.Execute) { "$($_.Execute) $($_.Arguments)".Trim() } else { [string]$_ }
+            }) -join '; '
+            [pscustomobject]@{
+              runner_label     = $runnerLabel
+              task_path        = $t.TaskPath
+              task_name        = $t.TaskName
+              state            = [string]$t.State
+              enabled          = [bool]$t.Settings.Enabled
+              run_on_demand    = [bool]$t.Settings.AllowDemandStart
+              actions          = $actions
+              author           = $t.Author
+              description      = $t.Description
+              next_run_time    = if ($info) { [string]$info.NextRunTime } else { '' }
+              last_run_time    = if ($info) { [string]$info.LastRunTime } else { '' }
+              last_task_result = if ($info) { [string]$info.LastTaskResult } else { '' }
+            }
+          }
+
+          # ── 3. Registry startup / Run keys that mention wsl ──────────────────
+          $runKeyPaths = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run',
+            'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+          )
+
+          $regRows = foreach ($keyPath in $runKeyPaths) {
+            if (-not (Test-Path $keyPath)) { continue }
+            $key = Get-Item -LiteralPath $keyPath -ErrorAction SilentlyContinue
+            if (-not $key) { continue }
+            foreach ($valueName in $key.GetValueNames()) {
+              $data = [string]$key.GetValue($valueName)
+              if ($data -match 'wsl' -or $valueName -match 'wsl') {
+                [pscustomobject]@{
+                  runner_label = $runnerLabel
+                  key_path     = $keyPath
+                  value_name   = $valueName
+                  data         = $data
+                }
+              }
+            }
+          }
+
+          # ── 4. Dump all Run-key entries (for completeness) ───────────────────
+          $allRunRows = foreach ($keyPath in $runKeyPaths) {
+            if (-not (Test-Path $keyPath)) { continue }
+            $key = Get-Item -LiteralPath $keyPath -ErrorAction SilentlyContinue
+            if (-not $key) { continue }
+            foreach ($valueName in $key.GetValueNames()) {
+              [pscustomobject]@{
+                key_path   = $keyPath
+                value_name = $valueName
+                data       = [string]$key.GetValue($valueName)
+              }
+            }
+          }
+
+          # ── 5. Write artifacts ───────────────────────────────────────────────
+          $wslInfo | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $reportDir 'wsl-info.json') -Encoding UTF8
+          $wslTaskRows | Export-Csv (Join-Path $reportDir 'wsl-tasks.csv') -NoTypeInformation -Encoding UTF8
+          $wslTaskRows | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $reportDir 'wsl-tasks.json') -Encoding UTF8
+          $regRows    | Export-Csv (Join-Path $reportDir 'wsl-registry-run.csv') -NoTypeInformation -Encoding UTF8
+          $allRunRows | Export-Csv (Join-Path $reportDir 'all-registry-run.csv') -NoTypeInformation -Encoding UTF8
+
+          # ── 6. Append WSL section to step summary ────────────────────────────
+          $lines = @()
+          $lines += ''
+          $lines += '## WSL investigation (issue #14264)'
+          $lines += ''
+          $lines += '### WSL executable info'
+          $lines += ''
+          $lines += '```'
+          $lines += "wsl.exe path : $($wslInfo['wsl_exe_path'])"
+          $lines += '```'
+          $lines += ''
+          $lines += '### WSL --version'
+          $lines += ''
+          $lines += '```'
+          $lines += $wslInfo['wsl_version']
+          $lines += '```'
+          $lines += ''
+          $lines += '### WSL --status'
+          $lines += ''
+          $lines += '```'
+          $lines += $wslInfo['wsl_status']
+          $lines += '```'
+          $lines += ''
+
+          $lines += '### WSL-related scheduled tasks (all states)'
+          $lines += ''
+          if ($wslTaskRows -and @($wslTaskRows).Count -gt 0) {
+            $header = '| State | Enabled | Task path | Task name | Actions | Next run | Last run |'
+            $sep    = '| --- | --- | --- | --- | --- | --- | --- |'
+            $lines += $header
+            $lines += $sep
+            foreach ($r in @($wslTaskRows)) {
+              $cells = @(
+                [string]$r.state,
+                [string]$r.enabled,
+                [string]$r.task_path  -replace '\|','\\|',
+                [string]$r.task_name  -replace '\|','\\|',
+                [string]$r.actions    -replace '\|','\\|',
+                [string]$r.next_run_time,
+                [string]$r.last_run_time
+              )
+              $lines += '| ' + ($cells -join ' | ') + ' |'
+            }
+          } else {
+            $lines += '_No WSL-related scheduled tasks found._'
+          }
+          $lines += ''
+
+          $lines += '### WSL-related registry Run/RunOnce entries'
+          $lines += ''
+          if ($regRows -and @($regRows).Count -gt 0) {
+            $lines += '| Key path | Value name | Data |'
+            $lines += '| --- | --- | --- |'
+            foreach ($r in @($regRows)) {
+              $cells = @(
+                [string]$r.key_path   -replace '\|','\\|',
+                [string]$r.value_name -replace '\|','\\|',
+                [string]$r.data       -replace '\|','\\|'
+              )
+              $lines += '| ' + ($cells -join ' | ') + ' |'
+            }
+          } else {
+            $lines += '_No WSL-related registry Run entries found._'
+          }
+          $lines += ''
+
+          $lines | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -240,6 +413,7 @@ jobs:
         run: |
           python <<'PY'
           import csv
+          import json
           import os
           import pathlib
 
@@ -253,6 +427,29 @@ jobs:
                   rows.extend(list(csv.DictReader(handle)))
 
           rows.sort(key=lambda row: (row["runner_label"], row["task_state"], row["task_path"], row["task_name"]))
+
+          # WSL task rows
+          wsl_task_rows = []
+          for csv_path in root.glob("**/wsl-tasks.csv"):
+              with csv_path.open(newline="", encoding="utf-8") as handle:
+                  wsl_task_rows.extend(list(csv.DictReader(handle)))
+
+          wsl_task_rows.sort(key=lambda r: (r.get("runner_label", ""), r.get("task_path", ""), r.get("task_name", "")))
+
+          # WSL registry rows
+          wsl_reg_rows = []
+          for csv_path in root.glob("**/wsl-registry-run.csv"):
+              with csv_path.open(newline="", encoding="utf-8") as handle:
+                  wsl_reg_rows.extend(list(csv.DictReader(handle)))
+
+          # WSL info blobs (per runner)
+          wsl_info_by_runner = {}
+          for info_path in root.glob("**/wsl-info.json"):
+              runner_dir = info_path.parent.parent.name  # artifact dir name
+              try:
+                  wsl_info_by_runner[runner_dir] = json.loads(info_path.read_text(encoding="utf-8"))
+              except Exception:
+                  pass
 
           def markdown_table(items, columns):
               if not items:
@@ -318,6 +515,64 @@ jobs:
               )
               summary_lines.append("")
 
+          # ── WSL investigation section (issue #14264) ──────────────────────────
+          summary_lines.append("# WSL investigation (issue #14264)")
+          summary_lines.append("")
+
+          if wsl_info_by_runner:
+              summary_lines.append("## WSL version / status per runner")
+              summary_lines.append("")
+              for runner_dir, info in sorted(wsl_info_by_runner.items()):
+                  summary_lines.append(f"### {runner_dir}")
+                  summary_lines.append("")
+                  summary_lines.append("```")
+                  summary_lines.append(f"wsl.exe path : {info.get('wsl_exe_path', 'N/A')}")
+                  summary_lines.append("--- wsl --version ---")
+                  summary_lines.append(info.get("wsl_version", ""))
+                  summary_lines.append("--- wsl --status ---")
+                  summary_lines.append(info.get("wsl_status", ""))
+                  summary_lines.append("```")
+                  summary_lines.append("")
+
+          summary_lines.append("## WSL-related scheduled tasks (all states, all runners)")
+          summary_lines.append("")
+          summary_lines.extend(
+              markdown_table(
+                  [
+                      {
+                          "Runner": r.get("runner_label", ""),
+                          "State": r.get("state", ""),
+                          "Enabled": r.get("enabled", ""),
+                          "Task path": r.get("task_path", ""),
+                          "Task name": r.get("task_name", ""),
+                          "Actions": r.get("actions", ""),
+                          "Next run": r.get("next_run_time", ""),
+                      }
+                      for r in wsl_task_rows
+                  ],
+                  ["Runner", "State", "Enabled", "Task path", "Task name", "Actions", "Next run"],
+              )
+          )
+          summary_lines.append("")
+
+          summary_lines.append("## WSL-related registry Run/RunOnce entries (all runners)")
+          summary_lines.append("")
+          summary_lines.extend(
+              markdown_table(
+                  [
+                      {
+                          "Runner": r.get("runner_label", ""),
+                          "Key path": r.get("key_path", ""),
+                          "Value name": r.get("value_name", ""),
+                          "Data": r.get("data", ""),
+                      }
+                      for r in wsl_reg_rows
+                  ],
+                  ["Runner", "Key path", "Value name", "Data"],
+              )
+          )
+          summary_lines.append("")
+
           with (out_dir / "scheduled-tasks.csv").open("w", newline="", encoding="utf-8") as handle:
               writer = csv.DictWriter(
                   handle,
@@ -339,6 +594,23 @@ jobs:
               )
               writer.writeheader()
               writer.writerows(rows)
+
+          if wsl_task_rows:
+              with (out_dir / "wsl-tasks-combined.csv").open("w", newline="", encoding="utf-8") as handle:
+                  writer = csv.DictWriter(
+                      handle,
+                      fieldnames=["runner_label", "task_path", "task_name", "state", "enabled",
+                                  "run_on_demand", "actions", "author", "description",
+                                  "next_run_time", "last_run_time", "last_task_result"],
+                  )
+                  writer.writeheader()
+                  writer.writerows(wsl_task_rows)
+
+          if wsl_reg_rows:
+              with (out_dir / "wsl-registry-combined.csv").open("w", newline="", encoding="utf-8") as handle:
+                  writer = csv.DictWriter(handle, fieldnames=["runner_label", "key_path", "value_name", "data"])
+                  writer.writeheader()
+                  writer.writerows(wsl_reg_rows)
 
           summary_text = "\n".join(summary_lines) + "\n"
           (out_dir / "summary.md").write_text(summary_text, encoding="utf-8")
