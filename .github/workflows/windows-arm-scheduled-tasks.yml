@@ -114,6 +114,19 @@ jobs:
             return ($parts -join '; ')
           }
 
+          function Test-IsTaskScheduled {
+            param(
+              [Parameter(Mandatory = $true)]
+              [bool]$Enabled,
+              [Parameter(Mandatory = $true)]
+              [string]$State,
+              [AllowNull()]
+              [datetime]$NextRunTime
+            )
+
+            return $Enabled -or $State -in @('Running', 'Ready', 'Queued') -or ($NextRunTime -and $NextRunTime -ne [datetime]::MinValue)
+          }
+
           $runnerLabel = '${{ matrix.label }}'
           $tasks = @(Get-ScheduledTask)
           $rows = New-Object System.Collections.Generic.List[object]
@@ -132,7 +145,7 @@ jobs:
             $lastTaskResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { $null }
             $triggerSummary = Get-TriggerSummary -Triggers $task.Triggers
 
-            $isScheduled = $enabled -or $state -in @('Running', 'Ready', 'Queued') -or ($nextRunTime -and $nextRunTime -ne [datetime]::MinValue)
+            $isScheduled = Test-IsTaskScheduled -Enabled $enabled -State $state -NextRunTime $nextRunTime
             if (-not $isScheduled) {
               continue
             }
