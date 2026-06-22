@@ -222,6 +222,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $reportDir = Join-Path $env:RUNNER_TEMP 'windows-arm-scheduled-tasks'
+          $runnerLabel = '${{ matrix.label }}'
 
           # ── 1. WSL version / status ──────────────────────────────────────────
           $wslInfo = [ordered]@{}
@@ -252,7 +253,7 @@ jobs:
             $_.TaskName -imatch 'WSL'
           })
 
-          $wslTaskRows = foreach ($t in $wslTasks) {
+          $wslTaskRows = @(foreach ($t in $wslTasks) {
             $info = $null
             try { $info = Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction SilentlyContinue } catch {}
             $actions = ($t.Actions | ForEach-Object {
@@ -272,7 +273,7 @@ jobs:
               last_run_time    = if ($info) { [string]$info.LastRunTime } else { '' }
               last_task_result = if ($info) { [string]$info.LastTaskResult } else { '' }
             }
-          }
+          })
 
           # ── 3. Registry startup / Run keys that mention wsl ──────────────────
           $runKeyPaths = @(
@@ -284,7 +285,7 @@ jobs:
             'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
           )
 
-          $regRows = foreach ($keyPath in $runKeyPaths) {
+          $regRows = @(foreach ($keyPath in $runKeyPaths) {
             if (-not (Test-Path $keyPath)) { continue }
             $key = Get-Item -LiteralPath $keyPath -ErrorAction SilentlyContinue
             if (-not $key) { continue }
@@ -299,10 +300,10 @@ jobs:
                 }
               }
             }
-          }
+          })
 
           # ── 4. Dump all Run-key entries (for completeness) ───────────────────
-          $allRunRows = foreach ($keyPath in $runKeyPaths) {
+          $allRunRows = @(foreach ($keyPath in $runKeyPaths) {
             if (-not (Test-Path $keyPath)) { continue }
             $key = Get-Item -LiteralPath $keyPath -ErrorAction SilentlyContinue
             if (-not $key) { continue }
@@ -313,7 +314,7 @@ jobs:
                 data       = [string]$key.GetValue($valueName)
               }
             }
-          }
+          })
 
           # ── 5. Write artifacts ───────────────────────────────────────────────
           $wslInfo | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $reportDir 'wsl-info.json') -Encoding UTF8
