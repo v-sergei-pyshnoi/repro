@@ -1,0 +1,344 @@
+name: Windows ARM scheduled tasks
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  collect:
+    name: Collect / ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-11-arm
+            runner: windows-11-arm
+          - label: windows-11-vs2026-arm
+            runner: windows-11-vs2026-arm
+
+    steps:
+      - name: Collect scheduled tasks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportDir = Join-Path $env:RUNNER_TEMP 'windows-arm-scheduled-tasks'
+          New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+
+          function Convert-ToMarkdownTable {
+            param(
+              [Parameter(Mandatory = $true)]
+              [array]$Rows,
+              [Parameter(Mandatory = $true)]
+              [string[]]$Columns
+            )
+
+            if (-not $Rows -or $Rows.Count -eq 0) {
+              $header = '| ' + ($Columns -join ' | ') + ' |'
+              $separator = '| ' + (($Columns | ForEach-Object { '---' }) -join ' | ') + ' |'
+              $empty = '| ' + (($Columns | ForEach-Object { if ($_ -eq $Columns[0]) { 'No data' } else { '' } }) -join ' | ') + ' |'
+              return @($header, $separator, $empty)
+            }
+
+            $header = '| ' + (($Columns | ForEach-Object { $_ -replace '\|', '\\|' }) -join ' | ') + ' |'
+            $separator = '| ' + (($Columns | ForEach-Object { '---' }) -join ' | ') + ' |'
+            $lines = @($header, $separator)
+
+            foreach ($row in $Rows) {
+              $cells = foreach ($column in $Columns) {
+                $value = $row.$column
+                if ($null -eq $value) {
+                  ''
+                } else {
+                  ([string]$value) -replace '\|', '\\|'
+                }
+              }
+              $lines += '| ' + ($cells -join ' | ') + ' |'
+            }
+
+            return $lines
+          }
+
+          function Format-DateTime {
+            param(
+              [AllowNull()]
+              [datetime]$Value
+            )
+
+            if ($null -eq $Value -or $Value -eq [datetime]::MinValue) {
+              return ''
+            }
+
+            return $Value.ToString('s')
+          }
+
+          function Get-TriggerSummary {
+            param(
+              [AllowNull()]
+              [object[]]$Triggers
+            )
+
+            if (-not $Triggers) {
+              return ''
+            }
+
+            $parts = foreach ($trigger in $Triggers) {
+              if ($null -eq $trigger) {
+                continue
+              }
+
+              $type = if ($trigger.CimClass -and $trigger.CimClass.CimClassName) {
+                $trigger.CimClass.CimClassName -replace '^MSFT_Task', '' -replace 'Trigger$', ''
+              } else {
+                $trigger.GetType().Name
+              }
+
+              $startBoundary = if ($trigger.PSObject.Properties.Name -contains 'StartBoundary' -and $trigger.StartBoundary) {
+                try {
+                  ([datetime]$trigger.StartBoundary).ToString('s')
+                } catch {
+                  [string]$trigger.StartBoundary
+                }
+              } else {
+                ''
+              }
+
+              if ($startBoundary) {
+                '{0} ({1})' -f $type, $startBoundary
+              } else {
+                $type
+              }
+            }
+
+            return ($parts -join '; ')
+          }
+
+          $runnerLabel = '${{ matrix.label }}'
+          $tasks = @(Get-ScheduledTask)
+          $rows = New-Object System.Collections.Generic.List[object]
+
+          foreach ($task in $tasks) {
+            $taskInfo = $null
+            try {
+              $taskInfo = Get-ScheduledTaskInfo -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop
+            } catch {
+            }
+
+            $state = [string]$task.State
+            $enabled = [bool]$task.Settings.Enabled
+            $nextRunTime = if ($taskInfo) { $taskInfo.NextRunTime } else { $null }
+            $lastRunTime = if ($taskInfo) { $taskInfo.LastRunTime } else { $null }
+            $lastTaskResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { $null }
+            $triggerSummary = Get-TriggerSummary -Triggers $task.Triggers
+
+            $isScheduled = $enabled -or $state -in @('Running', 'Ready', 'Queued') -or ($nextRunTime -and $nextRunTime -ne [datetime]::MinValue)
+            if (-not $isScheduled) {
+              continue
+            }
+
+            $rows.Add([pscustomobject]@{
+              runner_label    = $runnerLabel
+              image_os        = $env:ImageOS
+              image_version   = $env:ImageVersion
+              task_path       = $task.TaskPath
+              task_name       = $task.TaskName
+              task_state      = $state
+              enabled         = $enabled
+              next_run_time   = Format-DateTime -Value $nextRunTime
+              last_run_time   = Format-DateTime -Value $lastRunTime
+              last_task_result = $lastTaskResult
+              author          = $task.Author
+              description     = $task.Description
+              triggers        = $triggerSummary
+            })
+          }
+
+          $allRows = @($rows | Sort-Object task_state, task_path, task_name)
+          $stateRows = @($allRows | Group-Object task_state | Sort-Object Name | ForEach-Object {
+            [pscustomobject]@{
+              State = $_.Name
+              Count = $_.Count
+            }
+          })
+
+          $tasksCsv = Join-Path $reportDir 'scheduled-tasks.csv'
+          $tasksJson = Join-Path $reportDir 'scheduled-tasks.json'
+          $summaryPath = Join-Path $reportDir 'summary.md'
+          $systemInfoPath = Join-Path $reportDir 'system-info.txt'
+
+          $allRows | Export-Csv -Path $tasksCsv -NoTypeInformation -Encoding UTF8
+          $allRows | ConvertTo-Json -Depth 6 | Set-Content -Path $tasksJson -Encoding UTF8
+
+          @(
+            "runner_label=$runnerLabel"
+            "image_os=$env:ImageOS"
+            "image_version=$env:ImageVersion"
+            "computer_name=$env:COMPUTERNAME"
+            "scheduled_task_count=$($allRows.Count)"
+          ) | Set-Content -Path $systemInfoPath -Encoding UTF8
+
+          $summaryLines = @()
+          $summaryLines += "# $runnerLabel"
+          $summaryLines += ''
+          $summaryLines += "* Image OS: $env:ImageOS"
+          $summaryLines += "* Image Version: $env:ImageVersion"
+          $summaryLines += "* Active/scheduled tasks found: $($allRows.Count)"
+          $summaryLines += ''
+          $summaryLines += '## Task states'
+          $summaryLines += ''
+          $summaryLines += Convert-ToMarkdownTable -Rows $stateRows -Columns @('State', 'Count')
+          $summaryLines += ''
+          $summaryLines += '## Tasks'
+          $summaryLines += ''
+          $summaryLines += Convert-ToMarkdownTable -Rows ($allRows | ForEach-Object {
+            [pscustomobject]@{
+              State = $_.task_state
+              Enabled = $_.enabled
+              'Next run' = $_.next_run_time
+              'Last run' = $_.last_run_time
+              'Task path' = $_.task_path
+              'Task name' = $_.task_name
+              Triggers = $_.triggers
+            }
+          }) -Columns @('State', 'Enabled', 'Next run', 'Last run', 'Task path', 'Task name', 'Triggers')
+
+          $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
+          Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm-scheduled-tasks-${{ matrix.label }}
+          path: ${{ runner.temp }}/windows-arm-scheduled-tasks
+
+  summarize:
+    name: Summarize all Windows ARM images
+    runs-on: ubuntu-latest
+    needs: collect
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: windows-arm-scheduled-tasks-*
+          path: artifacts
+
+      - name: Build combined summary
+        shell: bash
+        run: |
+          python <<'PY'
+          import csv
+          import os
+          import pathlib
+
+          root = pathlib.Path("artifacts")
+          out_dir = pathlib.Path("combined-report")
+          out_dir.mkdir(exist_ok=True)
+
+          rows = []
+          for csv_path in root.glob("**/scheduled-tasks.csv"):
+              with csv_path.open(newline="", encoding="utf-8") as handle:
+                  rows.extend(list(csv.DictReader(handle)))
+
+          rows.sort(key=lambda row: (row["runner_label"], row["task_state"], row["task_path"], row["task_name"]))
+
+          def markdown_table(items, columns):
+              if not items:
+                  return [
+                      "| " + " | ".join(columns) + " |",
+                      "| " + " | ".join(["---"] * len(columns)) + " |",
+                      "| " + " | ".join(["No data"] + [""] * (len(columns) - 1)) + " |",
+                  ]
+
+              lines = [
+                  "| " + " | ".join(columns) + " |",
+                  "| " + " | ".join(["---"] * len(columns)) + " |",
+              ]
+              for item in items:
+                  cells = [str(item.get(column, "")).replace("|", "\\|") for column in columns]
+                  lines.append("| " + " | ".join(cells) + " |")
+              return lines
+
+          summary_lines = ["# Windows ARM scheduled tasks", ""]
+
+          runner_order = []
+          for row in rows:
+              if row["runner_label"] not in runner_order:
+                  runner_order.append(row["runner_label"])
+
+          for runner in runner_order:
+              runner_rows = [row for row in rows if row["runner_label"] == runner]
+              summary_lines.append(f"## {runner}")
+              summary_lines.append("")
+              if runner_rows:
+                  summary_lines.append(f"* Image OS: {runner_rows[0].get('image_os', '')}")
+                  summary_lines.append(f"* Image Version: {runner_rows[0].get('image_version', '')}")
+                  summary_lines.append(f"* Active/scheduled tasks found: {len(runner_rows)}")
+                  summary_lines.append("")
+
+              state_counts = {}
+              for row in runner_rows:
+                  state_counts[row["task_state"]] = state_counts.get(row["task_state"], 0) + 1
+
+              summary_lines.extend(
+                  markdown_table(
+                      [{"State": state, "Count": count} for state, count in sorted(state_counts.items())],
+                      ["State", "Count"],
+                  )
+              )
+              summary_lines.append("")
+              summary_lines.extend(
+                  markdown_table(
+                      [
+                          {
+                              "State": row["task_state"],
+                              "Enabled": row["enabled"],
+                              "Next run": row["next_run_time"],
+                              "Last run": row["last_run_time"],
+                              "Task path": row["task_path"],
+                              "Task name": row["task_name"],
+                              "Triggers": row["triggers"],
+                          }
+                          for row in runner_rows
+                      ],
+                      ["State", "Enabled", "Next run", "Last run", "Task path", "Task name", "Triggers"],
+                  )
+              )
+              summary_lines.append("")
+
+          with (out_dir / "scheduled-tasks.csv").open("w", newline="", encoding="utf-8") as handle:
+              writer = csv.DictWriter(
+                  handle,
+                  fieldnames=[
+                      "runner_label",
+                      "image_os",
+                      "image_version",
+                      "task_path",
+                      "task_name",
+                      "task_state",
+                      "enabled",
+                      "next_run_time",
+                      "last_run_time",
+                      "last_task_result",
+                      "author",
+                      "description",
+                      "triggers",
+                  ],
+              )
+              writer.writeheader()
+              writer.writerows(rows)
+
+          summary_text = "\n".join(summary_lines) + "\n"
+          (out_dir / "summary.md").write_text(summary_text, encoding="utf-8")
+
+          print(summary_text)
+          with pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write(summary_text)
+          PY
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm-scheduled-tasks-combined
+          path: combined-report
