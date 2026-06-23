@@ -1,0 +1,55 @@
+name: Windows ARM Screenshots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Take screenshots every 5 seconds for 3 minutes
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+
+          $outputDir = "$env:RUNNER_TEMP\screenshots"
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+          $duration = 180   # seconds
+          $interval = 5     # seconds
+          $end = (Get-Date).AddSeconds($duration)
+          $i = 1
+
+          while ((Get-Date) -lt $end) {
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+
+            $timestamp = (Get-Date -Format 'yyyyMMdd_HHmmss')
+            $file = "$outputDir\screenshot_${i}_${timestamp}.png"
+            $bitmap.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+
+            $graphics.Dispose()
+            $bitmap.Dispose()
+
+            Write-Host "Saved: $file"
+            $i++
+
+            $remaining = ($end - (Get-Date)).TotalSeconds
+            if ($remaining -gt 0) {
+              $sleep = [Math]::Min($interval, $remaining)
+              Start-Sleep -Seconds $sleep
+            }
+          }
+
+          Write-Host "Done. Total screenshots: $($i - 1)"
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm-screenshots
+          path: ${{ runner.temp }}\screenshots\
