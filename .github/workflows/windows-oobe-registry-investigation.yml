@@ -7,8 +7,15 @@ permissions: {}
 
 jobs:
   investigate:
-    name: Inspect Windows OOBE and startup prompt registry state
-    runs-on: windows-2025
+    name: Inspect Windows OOBE and startup prompt registry state / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-2025
+          - windows-11-arm
+          - windows-11-vs2026-arm
 
     steps:
       - name: Print relevant registry locations
