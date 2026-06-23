@@ -1,0 +1,17 @@
+name: Install aws-cdk via npm
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install-aws-cdk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install aws-cdk
+        run: npm install -g aws-cdk
+
+      - name: Verify aws-cdk version
+        run: cdk --version
