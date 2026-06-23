@@ -1,0 +1,105 @@
+name: Investigate Windows OOBE registry keys
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  investigate:
+    name: Inspect Windows OOBE and startup prompt registry state
+    runs-on: windows-2025
+
+    steps:
+      - name: Print relevant registry locations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $locations = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\OOBE'
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+            'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'
+            'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+            'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+            'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy'
+          )
+
+          foreach ($path in $locations) {
+            Write-Host ''
+            Write-Host "=== $path ==="
+
+            if (-not (Test-Path -LiteralPath $path)) {
+              Write-Host 'Path not found'
+              continue
+            }
+
+            Get-ItemProperty -LiteralPath $path |
+              Select-Object * -ExcludeProperty PSPath, PSParentPath, PSChildName, PSDrive, PSProvider |
+              Format-List *
+          }
+
+      - name: Print candidate values to compare against runner state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $candidates = @(
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'; Name = 'HideEULAPage'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Hide EULA page during OOBE' }
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'; Name = 'HideOEMRegistrationScreen'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Hide OEM registration prompts' }
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'; Name = 'HideOnlineAccountScreens'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Reduce Microsoft account setup prompts' }
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'; Name = 'HideWirelessSetupInOOBE'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Hide network setup step during OOBE' }
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'; Name = 'UnattendCreatedUser'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Indicate unattended user creation' }
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'; Name = 'ProtectYourPC'; SuggestedValue = 3; Type = 'DWORD'; Reason = 'Suppress express settings prompts' }
+            @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'; Name = 'EnableFirstLogonAnimation'; SuggestedValue = 0; Type = 'DWORD'; Reason = 'Disable first logon animation' }
+            @{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'; Name = 'DisablePrivacyExperience'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Disable privacy experience prompts' }
+            @{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent'; Name = 'DisableWindowsConsumerFeatures'; SuggestedValue = 1; Type = 'DWORD'; Reason = 'Disable consumer experience prompts' }
+            @{ Path = 'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Name = 'SubscribedContent-338388Enabled'; SuggestedValue = 0; Type = 'DWORD'; Reason = 'Disable startup suggestions in default profile' }
+            @{ Path = 'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Name = 'SubscribedContent-338389Enabled'; SuggestedValue = 0; Type = 'DWORD'; Reason = 'Disable welcome/content prompts in default profile' }
+            @{ Path = 'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Name = 'SilentInstalledAppsEnabled'; SuggestedValue = 0; Type = 'DWORD'; Reason = 'Disable automatic app suggestions' }
+            @{ Path = 'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy'; Name = 'PrivacyConsentPresentationVersion'; SuggestedValue = 3; Type = 'DWORD'; Reason = 'Compare privacy consent state in default profile' }
+            @{ Path = 'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy'; Name = 'PrivacyConsentSettingsValidMask'; SuggestedValue = 4; Type = 'DWORD'; Reason = 'Compare privacy consent mask in default profile' }
+            @{ Path = 'Registry::HKEY_USERS\.DEFAULT\SOFTWARE\Microsoft\Windows\CurrentVersion\Privacy'; Name = 'PrivacyConsentSettingsVersion'; SuggestedValue = 5; Type = 'DWORD'; Reason = 'Compare privacy consent version in default profile' }
+          )
+
+          $rows = foreach ($candidate in $candidates) {
+            $currentValue = $null
+            $pathExists = Test-Path -LiteralPath $candidate.Path
+
+            if ($pathExists) {
+              $property = Get-ItemProperty -LiteralPath $candidate.Path -Name $candidate.Name -ErrorAction SilentlyContinue
+              if ($null -ne $property) {
+                $currentValue = $property.($candidate.Name)
+              }
+            }
+
+            [pscustomobject]@{
+              Path           = $candidate.Path
+              Name           = $candidate.Name
+              CurrentValue   = if ($null -eq $currentValue) { '<missing>' } else { $currentValue }
+              SuggestedValue = $candidate.SuggestedValue
+              Type           = $candidate.Type
+              Reason         = $candidate.Reason
+            }
+          }
+
+          $rows | Format-Table -AutoSize
+
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '## Candidate OOBE/startup prompt registry values'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ''
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '| Path | Name | Current value | Suggested value | Type | Reason |'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '| --- | --- | --- | --- | --- | --- |'
+
+          foreach ($row in $rows) {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value (
+              '| {0} | {1} | {2} | {3} | {4} | {5} |' -f `
+                $row.Path.Replace('|', '\|'), `
+                $row.Name.Replace('|', '\|'), `
+                ([string]$row.CurrentValue).Replace('|', '\|'), `
+                ([string]$row.SuggestedValue).Replace('|', '\|'), `
+                $row.Type.Replace('|', '\|'), `
+                $row.Reason.Replace('|', '\|')
+            )
+          }
