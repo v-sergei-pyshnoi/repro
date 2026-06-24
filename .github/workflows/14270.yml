@@ -1,0 +1,96 @@
+name: Repro Azure Artifacts Credential Provider
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check-credential-provider:
+    name: Check / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-11-arm
+          - windows-2022
+          - ubuntu-24.04
+          - ubuntu-22.04
+
+    steps:
+      - name: Print runner info
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host "Runner OS: $env:RUNNER_OS"
+          Write-Host "Runner Arch: $env:RUNNER_ARCH"
+          Write-Host "ImageOS: $env:ImageOS"
+          Write-Host "ImageVersion: $env:ImageVersion"
+
+          dotnet --info
+
+      - name: Check Azure Artifacts Credential Provider presence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $providerPatterns = @(
+            'CredentialProvider.Microsoft.exe',
+            'CredentialProvider.Microsoft.dll'
+          )
+
+          $roots = [System.Collections.Generic.List[string]]::new()
+          $roots.Add((Join-Path $HOME '.nuget/plugins'))
+
+          if ($env:RUNNER_OS -eq 'Windows') {
+            if ($env:ProgramFiles) {
+              $roots.Add((Join-Path $env:ProgramFiles 'NuGet/Plugins'))
+            }
+            if ($env:'ProgramFiles(x86)') {
+              $roots.Add((Join-Path $env:'ProgramFiles(x86)' 'NuGet/Plugins'))
+            }
+            $roots.Add('C:/hostedtoolcache/windows/NuGet')
+          }
+
+          if ($env:RUNNER_OS -eq 'Linux') {
+            $roots.Add('/usr/share/nuget/plugins')
+            $roots.Add('/usr/local/share/nuget/plugins')
+            $roots.Add('/opt/hostedtoolcache')
+          }
+
+          if ($env:NUGET_PLUGIN_PATHS) {
+            $env:NUGET_PLUGIN_PATHS -split [IO.Path]::PathSeparator |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              ForEach-Object { $roots.Add($_) }
+          }
+
+          $existingRoots = $roots |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique |
+            Where-Object { Test-Path $_ }
+
+          if (-not $existingRoots) {
+            throw "No candidate directories exist. Checked: $($roots -join ', ')"
+          }
+
+          Write-Host 'Searching in candidate directories:'
+          $existingRoots | ForEach-Object { Write-Host " - $_" }
+
+          $found = foreach ($root in $existingRoots) {
+            foreach ($pattern in $providerPatterns) {
+              Get-ChildItem -Path $root -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
+            }
+          }
+
+          $providers = $found |
+            Select-Object -ExpandProperty FullName -Unique |
+            Sort-Object
+
+          if (-not $providers) {
+            throw 'Azure Artifacts Credential Provider was not found on this runner image.'
+          }
+
+          Write-Host 'Found Azure Artifacts Credential Provider files:'
+          $providers | ForEach-Object { Write-Host " - $_" }
