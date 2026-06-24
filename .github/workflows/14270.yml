@@ -68,7 +68,7 @@ jobs:
 
           $existingRoots = $roots |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Sort-Object -Unique |
+            Select-Object -Unique |
             Where-Object { Test-Path $_ }
 
           if (-not $existingRoots) {
