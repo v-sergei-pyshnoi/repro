@@ -1,0 +1,54 @@
+name: Windows ARM Python x64
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  python-x64:
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Clean Python hosted tool cache
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $paths = @()
+
+          if ($env:RUNNER_TOOL_CACHE) {
+            $paths += Join-Path $env:RUNNER_TOOL_CACHE 'Python'
+
+            $runnerToolCacheParent = Split-Path -Path $env:RUNNER_TOOL_CACHE -Parent
+            if ($runnerToolCacheParent) {
+              $paths += Join-Path $runnerToolCacheParent 'Python'
+            }
+          }
+
+          $paths += 'C:\hostedtoolcache\windows\Python'
+          $paths = $paths | Select-Object -Unique
+
+          foreach ($path in $paths) {
+            if (-not $path) {
+              continue
+            }
+
+            if (Test-Path -LiteralPath $path) {
+              Write-Host "Removing $path"
+              Remove-Item -LiteralPath $path -Recurse -Force
+            } else {
+              Write-Host "Not found: $path"
+            }
+          }
+
+      - name: Setup Python x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+
+      - name: Show Python version and architecture
+        shell: pwsh
+        run: |
+          python --version
+          python -c "import platform,struct; print(f'platform.machine={platform.machine()}'); print(f'bits={struct.calcsize(\"P\") * 8}')"
