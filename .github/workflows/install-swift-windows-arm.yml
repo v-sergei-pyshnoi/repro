@@ -46,33 +46,24 @@ jobs:
             throw "Installer failed with exit code $($process.ExitCode)"
           }
 
-      - name: Locate swift.exe and print version
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
+          # Swift's Windows installer updates PATH outside the current process, so gather only the new
+          # Machine/User PATH segments here and expose them to subsequent steps via GITHUB_PATH.
+          $existingPathEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          foreach ($pathEntry in ($env:Path -split ';' | Where-Object { $_ })) {
+            $null = $existingPathEntries.Add($pathEntry)
+          }
 
-          $swiftExe = $null
-
-          $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
-
-          if (-not $swiftExe) {
-            # Swift installs place swift.exe under a versioned directory plus usr\bin, so depth 6 covers known layouts without scanning too broadly.
-            $searchDepth = 6
-            $searchRoots = @(
-              'C:\Program Files\Swift',
-              'C:\Library\Developer\Toolchains',
-              "$env:USERPROFILE\AppData\Local\Programs\Swift"
-            ) | Where-Object { Test-Path -LiteralPath $_ }
-
-            if ($searchRoots) {
-              $swiftExe = Get-ChildItem -Path $searchRoots -Filter swift.exe -Recurse -Depth $searchDepth -ErrorAction SilentlyContinue |
-                Select-Object -First 1 -ExpandProperty FullName
+          foreach ($level in 'Machine', 'User') {
+            $installedPath = [Environment]::GetEnvironmentVariable('Path', $level)
+            foreach ($pathEntry in ($installedPath -split ';' | Where-Object { $_ })) {
+              if ($existingPathEntries.Add($pathEntry)) {
+                $pathEntry | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              }
             }
           }
 
-          if (-not $swiftExe) {
-            throw 'swift.exe was not found after installation'
-          }
-
-          Write-Host "Using Swift executable: $swiftExe"
-          & $swiftExe --version
+      - name: Print Swift version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          swift --version
