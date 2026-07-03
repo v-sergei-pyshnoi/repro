@@ -46,8 +46,15 @@ jobs:
             throw "Installer failed with exit code $($process.ExitCode)"
           }
 
-          $originalPathEntries = @($env:Path -split ';' | Where-Object { $_ })
-          $newPathEntries = @()
+          $seenPathEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+          $originalPathEntries = [System.Collections.Generic.List[string]]::new()
+          foreach ($pathEntry in ($env:Path -split ';' | Where-Object { $_ })) {
+            if ($seenPathEntries.Add($pathEntry)) {
+              $originalPathEntries.Add($pathEntry)
+            }
+          }
+
+          $newPathEntries = [System.Collections.Generic.List[string]]::new()
 
           foreach ($level in 'Machine', 'User') {
             [Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
@@ -56,8 +63,8 @@ jobs:
 
               if ($name -eq 'Path') {
                 foreach ($pathEntry in ($value -split ';' | Where-Object { $_ })) {
-                  if ($newPathEntries -notcontains $pathEntry -and $originalPathEntries -notcontains $pathEntry) {
-                    $newPathEntries += $pathEntry
+                  if ($seenPathEntries.Add($pathEntry)) {
+                    $newPathEntries.Add($pathEntry)
                   }
                 }
               } else {
@@ -67,7 +74,7 @@ jobs:
           }
 
           if ($newPathEntries.Count -gt 0) {
-            $mergedPath = (@($newPathEntries) + $originalPathEntries | Select-Object -Unique) -join ';'
+            $mergedPath = (@($newPathEntries) + @($originalPathEntries)) -join ';'
             Set-Item -Path 'Env:Path' -Value $mergedPath
 
             foreach ($pathEntry in $newPathEntries) {
