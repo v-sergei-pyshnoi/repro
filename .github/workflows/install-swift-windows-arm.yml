@@ -36,15 +36,22 @@ jobs:
           "installer_path=$installerPath" >> $env:GITHUB_OUTPUT
 
       - name: Install Swift silently
+        id: install
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $installerPath = "${{ steps.download.outputs.installer_path }}"
 
+          $installStart = Get-Date
           $process = Start-Process -FilePath $installerPath -ArgumentList '/quiet','/norestart' -Wait -PassThru
+          $installEnd = Get-Date
           if ($process.ExitCode -ne 0) {
             throw "Installer failed with exit code $($process.ExitCode)"
           }
+
+          $elapsed = $installEnd - $installStart
+          Write-Host "Installation time: $([int]$elapsed.TotalMinutes)m $($elapsed.Seconds)s"
+          "install_seconds=$([int]$elapsed.TotalSeconds)" >> $env:GITHUB_OUTPUT
 
           # Swift's Windows installer updates PATH outside the current process, so gather only the new
           # Machine/User PATH segments here and expose them to subsequent steps via GITHUB_PATH.
@@ -67,3 +74,27 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           swift --version
+
+      - name: Report install stats
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Disk usage: sum known Swift installation directories
+          $swiftDirs = @(
+            "$env:SystemDrive\Library",
+            "$env:ProgramFiles\Swift"
+          )
+          $totalBytes = 0
+          foreach ($dir in $swiftDirs) {
+            if (Test-Path $dir) {
+              $size = (Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue $dir | Measure-Object -Property Length -Sum).Sum
+              $totalBytes += $size
+              Write-Host "$dir : $([math]::Round($size / 1MB, 1)) MB"
+            }
+          }
+          $totalMB = [math]::Round($totalBytes / 1MB, 1)
+          $totalGB = [math]::Round($totalBytes / 1GB, 2)
+          Write-Host ""
+          Write-Host "Total Swift disk usage: $totalMB MB ($totalGB GB)"
+          Write-Host "Installation time     : ${{ steps.install.outputs.install_seconds }} seconds"
