@@ -99,7 +99,8 @@ jobs:
           }
 
           $swiftBin = ''
-          $swiftVersion = '(not available)'
+          $swiftVersion = 'not available'
+          $swiftProbeOutput = 'swift.exe was not found after installation'
           $swiftStatus = 'swift.exe was not found after installation'
 
           if ($swiftExe) {
@@ -121,12 +122,10 @@ jobs:
             $swiftVersionText = ($swiftVersionOutput | Out-String).Trim()
             if ($swiftVersionExitCode -eq 0) {
               $swiftVersion = $swiftVersionText
+              $swiftProbeOutput = $swiftVersionText
               $swiftStatus = 'swift.exe located and version command succeeded'
             } else {
-              if (-not $swiftVersionText) {
-                $swiftVersionText = "swift.exe --version exited with code $swiftVersionExitCode"
-              }
-              $swiftVersion = $swiftVersionText
+              $swiftProbeOutput = if ($swiftVersionText) { $swiftVersionText } else { "swift.exe --version exited with code $swiftVersionExitCode" }
               $swiftStatus = "swift.exe located but version command failed (exit code $swiftVersionExitCode)"
             }
           }
@@ -135,6 +134,9 @@ jobs:
           "swift_exe=$swiftExe" >> $env:GITHUB_OUTPUT
           "swift_bin=$swiftBin" >> $env:GITHUB_OUTPUT
           "swift_status=$swiftStatus" >> $env:GITHUB_OUTPUT
+          "swift_probe_output<<EOF" >> $env:GITHUB_OUTPUT
+          $swiftProbeOutput >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
           "swift_version<<EOF" >> $env:GITHUB_OUTPUT
           $swiftVersion >> $env:GITHUB_OUTPUT
           "EOF" >> $env:GITHUB_OUTPUT
@@ -148,6 +150,7 @@ jobs:
           PACKAGE_ID: ${{ steps.install.outputs.package_id }}
           SWIFT_EXE: ${{ steps.install.outputs.swift_exe }}
           SWIFT_BIN: ${{ steps.install.outputs.swift_bin }}
+          SWIFT_PROBE_OUTPUT: ${{ steps.install.outputs.swift_probe_output }}
           SWIFT_STATUS: ${{ steps.install.outputs.swift_status }}
           SWIFT_VERSION: ${{ steps.install.outputs.swift_version }}
         run: |
@@ -202,11 +205,12 @@ jobs:
           $summaryLines += "* Swift executable: $env:SWIFT_EXE"
           $summaryLines += "* Swift bin directory: $env:SWIFT_BIN"
           $summaryLines += "* Swift probe status: $env:SWIFT_STATUS"
+          $summaryLines += "* Swift reported version: $env:SWIFT_VERSION"
           $summaryLines += ''
-          $summaryLines += '## Swift version probe output'
+          $summaryLines += '## Swift probe output'
           $summaryLines += ''
           $summaryLines += '```'
-          $summaryLines += $env:SWIFT_VERSION
+          $summaryLines += $env:SWIFT_PROBE_OUTPUT
           $summaryLines += '```'
           $summaryLines += ''
           $summaryLines += '## Disk usage on C:'
