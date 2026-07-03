@@ -11,6 +11,9 @@ jobs:
     runs-on: windows-11-arm
     env:
       SWIFT_SEARCH_DEPTH: '6'
+      SWIFT_INSTALLER_URL: 'https://download.swift.org/swift-6.3.3-release/windows10-arm64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10-arm64.exe'
+      # Keep this in sync with SWIFT_INSTALLER_URL whenever Swift version is updated.
+      SWIFT_INSTALLER_EXPECTED_BYTES: '1363698552'
       # Swift installers on Windows can use Program Files or C:\Library\Developer\Toolchains layout.
       SWIFT_ROOTS_JSON: '["C:\\Program Files\\Swift","C:\\Library\\Developer\\Toolchains","%USERPROFILE%\\AppData\\Local\\Programs\\Swift"]'
 
@@ -25,64 +28,57 @@ jobs:
           "pre_free_bytes=$([int64]$drive.Free)" >> $env:GITHUB_OUTPUT
           "pre_total_bytes=$([int64]($drive.Used + $drive.Free))" >> $env:GITHUB_OUTPUT
 
-      - name: Ensure winget is available
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ((Get-Command winget -ErrorAction SilentlyContinue) -ne $null) {
-            Write-Host "winget already in PATH: $(winget --version)"
-          } else {
-            # On some runner images winget is installed as an AppX package but not on PATH
-            $appxDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
-            $appxWinget = "$appxDir\winget.exe"
-            if (Test-Path $appxWinget) {
-              "$appxDir" >> $env:GITHUB_PATH
-              Write-Host "Added AppX winget location to GITHUB_PATH: $appxWinget"
-            } else {
-              # Attempt to register the pre-staged DesktopAppInstaller package
-              Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
-              if (Test-Path $appxWinget) {
-                "$appxDir" >> $env:GITHUB_PATH
-                Write-Host "Registered DesktopAppInstaller; added AppX winget location to GITHUB_PATH"
-              } else {
-                throw "winget could not be found or installed"
-              }
-            }
-          }
-
-      - name: Install Swift via winget
+      - name: Install Swift via direct .exe installer
         id: install
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          winget --version
-          winget source update
+          $installerUrl = $env:SWIFT_INSTALLER_URL
+          $installerFileName = [System.IO.Path]::GetFileName($installerUrl)
+          $installerPath = Join-Path $env:RUNNER_TEMP $installerFileName
 
-          $packageCandidates = @(
-            'Swift.Toolchain',
-            'Swiftlang.Swift'
-          )
-          $installArgs = @(
-            '--exact',
-            '--silent',
-            '--accept-package-agreements',
-            '--accept-source-agreements',
-            '--scope', 'machine'
-          )
+          Write-Host "Downloading Swift installer: $installerUrl"
+          try {
+            $headResponse = Invoke-WebRequest -Uri $installerUrl -Method Head -ErrorAction Stop
+            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -ErrorAction Stop
+          } catch {
+            throw "Failed to download Swift installer from $installerUrl. Error: $($_.Exception.Message)"
+          }
 
-          $selectedPackage = $null
-          foreach ($packageId in $packageCandidates) {
-            Write-Host "Trying to install package: $packageId"
-            & winget install --id $packageId @installArgs
-            if ($LASTEXITCODE -eq 0) {
-              $selectedPackage = $packageId
-              break
+          if (-not (Test-Path -LiteralPath $installerPath)) {
+            throw "Swift installer was not downloaded: $installerPath"
+          }
+
+          $downloadedInstallerSizeBytes = [int64](Get-Item -LiteralPath $installerPath).Length
+          $expectedInstallerSizeBytes = [int64]$env:SWIFT_INSTALLER_EXPECTED_BYTES
+          if ($expectedInstallerSizeBytes -gt 0 -and $downloadedInstallerSizeBytes -ne $expectedInstallerSizeBytes) {
+            throw "Downloaded installer size mismatch. Expected: $expectedInstallerSizeBytes bytes. Actual: $downloadedInstallerSizeBytes bytes."
+          }
+
+          $headerContentLength = [string]$headResponse.Headers['Content-Length']
+          if ($headerContentLength) {
+            $responseContentLength = [int64]$headerContentLength
+            if ($responseContentLength -ne $downloadedInstallerSizeBytes) {
+              throw "Downloaded installer size does not match HTTP Content-Length. Header: $responseContentLength bytes. Actual: $downloadedInstallerSizeBytes bytes."
             }
           }
 
-          if (-not $selectedPackage) {
-            throw "Failed to install Swift from all package candidates: $($packageCandidates -join ', ')"
+          $signature = Get-AuthenticodeSignature -FilePath $installerPath
+          if ($signature.Status -ne 'Valid') {
+            throw "Installer signature is not valid. Status: $($signature.Status)"
           }
+          if (-not $signature.SignerCertificate -or -not $signature.SignerCertificate.Subject.Contains('O=Apple Inc.')) {
+            throw "Installer signer is unexpected: $($signature.SignerCertificate.Subject)"
+          }
+
+          $installStart = Get-Date
+          $installProcess = Start-Process -FilePath $installerPath -ArgumentList '/quiet','/norestart' -Wait -PassThru
+          $installEnd = Get-Date
+          if ($installProcess.ExitCode -ne 0) {
+            throw "Swift installer exited with code $($installProcess.ExitCode)"
+          }
+
+          $installDurationSeconds = [math]::Round(($installEnd - $installStart).TotalSeconds, 3)
 
           $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
           if (-not $swiftExe) {
@@ -130,7 +126,9 @@ jobs:
             }
           }
 
-          "package_id=$selectedPackage" >> $env:GITHUB_OUTPUT
+          "installer_url=$installerUrl" >> $env:GITHUB_OUTPUT
+          "installer_size_bytes=$downloadedInstallerSizeBytes" >> $env:GITHUB_OUTPUT
+          "install_duration_seconds=$installDurationSeconds" >> $env:GITHUB_OUTPUT
           "swift_exe=$swiftExe" >> $env:GITHUB_OUTPUT
           "swift_bin=$swiftBin" >> $env:GITHUB_OUTPUT
           "swift_status=$swiftStatus" >> $env:GITHUB_OUTPUT
@@ -147,7 +145,9 @@ jobs:
           PRE_USED_BYTES: ${{ steps.before.outputs.pre_used_bytes }}
           PRE_FREE_BYTES: ${{ steps.before.outputs.pre_free_bytes }}
           PRE_TOTAL_BYTES: ${{ steps.before.outputs.pre_total_bytes }}
-          PACKAGE_ID: ${{ steps.install.outputs.package_id }}
+          INSTALLER_URL: ${{ steps.install.outputs.installer_url }}
+          INSTALLER_SIZE_BYTES: ${{ steps.install.outputs.installer_size_bytes }}
+          INSTALL_DURATION_SECONDS: ${{ steps.install.outputs.install_duration_seconds }}
           SWIFT_EXE: ${{ steps.install.outputs.swift_exe }}
           SWIFT_BIN: ${{ steps.install.outputs.swift_bin }}
           SWIFT_PROBE_OUTPUT: ${{ steps.install.outputs.swift_probe_output }}
@@ -200,8 +200,10 @@ jobs:
           $summaryLines = @()
           $summaryLines += '# Swift installation report (windows-11-arm)'
           $summaryLines += ''
-          $summaryLines += '* Installer: winget'
-          $summaryLines += "* Package ID: $env:PACKAGE_ID"
+          $summaryLines += '* Installer: direct .exe download'
+          $summaryLines += "* Installer URL: $env:INSTALLER_URL"
+          $summaryLines += "* Installer size: $env:INSTALLER_SIZE_BYTES bytes"
+          $summaryLines += "* Installation duration: $env:INSTALL_DURATION_SECONDS seconds"
           $summaryLines += "* Swift executable: $env:SWIFT_EXE"
           $summaryLines += "* Swift bin directory: $env:SWIFT_BIN"
           $summaryLines += "* Swift probe status: $env:SWIFT_STATUS"
@@ -232,7 +234,9 @@ jobs:
           Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
           $reportObject = [pscustomobject]@{
-            package_id = $env:PACKAGE_ID
+            installer_url = $env:INSTALLER_URL
+            installer_size_bytes = [int64]$env:INSTALLER_SIZE_BYTES
+            install_duration_seconds = [double]$env:INSTALL_DURATION_SECONDS
             swift_exe = $env:SWIFT_EXE
             swift_bin = $env:SWIFT_BIN
             swift_version = $env:SWIFT_VERSION
