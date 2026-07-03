@@ -51,7 +51,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+          $swiftExe = $null
 
           if (-not $swiftExe) {
             $candidatePatterns = @(
@@ -68,6 +68,10 @@ jobs:
                 break
               }
             }
+          }
+
+          if (-not $swiftExe) {
+            $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
           }
 
           if (-not $swiftExe) {
