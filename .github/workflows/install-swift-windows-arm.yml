@@ -56,7 +56,7 @@ jobs:
           $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
 
           if (-not $swiftExe) {
-            # Search depth is limited to keep the scan fast while covering known Swift install layout.
+            # Swift installs place swift.exe under a versioned directory plus usr\bin, so depth 6 covers known layouts without scanning too broadly.
             $searchDepth = 6
             $searchRoots = @(
               'C:\Program Files\Swift',
