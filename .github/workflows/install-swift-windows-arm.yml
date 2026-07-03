@@ -80,21 +80,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Disk usage: sum known Swift installation directories
-          $swiftDirs = @(
-            "$env:SystemDrive\Library",
-            "$env:ProgramFiles\Swift"
-          )
-          $totalBytes = 0
-          foreach ($dir in $swiftDirs) {
-            if (Test-Path $dir) {
-              $size = (Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue $dir | Measure-Object -Property Length -Sum).Sum
-              $totalBytes += $size
-              Write-Host "$dir : $([math]::Round($size / 1MB, 1)) MB"
-            }
+          # Disk usage: find Swift install root from swift.exe location
+          $swiftExe = (Get-Command swift -ErrorAction SilentlyContinue).Source
+          if ($swiftExe) {
+            # swift.exe lives in <install-root>\bin\swift.exe — go up two levels
+            $swiftRoot = Split-Path (Split-Path $swiftExe -Parent) -Parent
+            Write-Host "Swift installed at: $swiftRoot"
+            $size = (Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue $swiftRoot | Measure-Object -Property Length -Sum).Sum
+            $totalMB = [math]::Round($size / 1MB, 1)
+            $totalGB = [math]::Round($size / 1GB, 2)
+          } else {
+            Write-Host "swift.exe not found in PATH"
+            $totalMB = 0
+            $totalGB = 0
           }
-          $totalMB = [math]::Round($totalBytes / 1MB, 1)
-          $totalGB = [math]::Round($totalBytes / 1GB, 2)
           Write-Host ""
           Write-Host "Total Swift disk usage: $totalMB MB ($totalGB GB)"
           Write-Host "Installation time     : ${{ steps.install.outputs.install_seconds }} seconds"
