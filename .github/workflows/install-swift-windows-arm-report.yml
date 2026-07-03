@@ -97,17 +97,44 @@ jobs:
                 Select-Object -First 1 -ExpandProperty FullName
             }
           }
-          if (-not $swiftExe) {
-            throw 'swift.exe not found after installation'
+
+          $swiftBin = ''
+          $swiftVersion = '(not available)'
+          $swiftStatus = 'swift.exe was not found after installation'
+
+          if ($swiftExe) {
+            $swiftBin = Split-Path -Path $swiftExe -Parent
+            "$swiftBin" >> $env:GITHUB_PATH
+
+            $previousErrorActionPreference = $ErrorActionPreference
+            $previousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+            try {
+              $ErrorActionPreference = 'Continue'
+              $PSNativeCommandUseErrorActionPreference = $false
+              $swiftVersionOutput = & $swiftExe --version 2>&1
+              $swiftVersionExitCode = $LASTEXITCODE
+            } finally {
+              $ErrorActionPreference = $previousErrorActionPreference
+              $PSNativeCommandUseErrorActionPreference = $previousNativeCommandPreference
+            }
+
+            $swiftVersionText = ($swiftVersionOutput | Out-String).Trim()
+            if ($swiftVersionExitCode -eq 0) {
+              $swiftVersion = $swiftVersionText
+              $swiftStatus = 'swift.exe located and version command succeeded'
+            } else {
+              if (-not $swiftVersionText) {
+                $swiftVersionText = "swift.exe --version exited with code $swiftVersionExitCode"
+              }
+              $swiftVersion = $swiftVersionText
+              $swiftStatus = "swift.exe located but version command failed (exit code $swiftVersionExitCode)"
+            }
           }
 
-          $swiftBin = Split-Path -Path $swiftExe -Parent
-          "$swiftBin" >> $env:GITHUB_PATH
-
-          $swiftVersion = & $swiftExe --version
           "package_id=$selectedPackage" >> $env:GITHUB_OUTPUT
           "swift_exe=$swiftExe" >> $env:GITHUB_OUTPUT
           "swift_bin=$swiftBin" >> $env:GITHUB_OUTPUT
+          "swift_status=$swiftStatus" >> $env:GITHUB_OUTPUT
           "swift_version<<EOF" >> $env:GITHUB_OUTPUT
           $swiftVersion >> $env:GITHUB_OUTPUT
           "EOF" >> $env:GITHUB_OUTPUT
@@ -121,6 +148,7 @@ jobs:
           PACKAGE_ID: ${{ steps.install.outputs.package_id }}
           SWIFT_EXE: ${{ steps.install.outputs.swift_exe }}
           SWIFT_BIN: ${{ steps.install.outputs.swift_bin }}
+          SWIFT_STATUS: ${{ steps.install.outputs.swift_status }}
           SWIFT_VERSION: ${{ steps.install.outputs.swift_version }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -173,8 +201,9 @@ jobs:
           $summaryLines += "* Package ID: $env:PACKAGE_ID"
           $summaryLines += "* Swift executable: $env:SWIFT_EXE"
           $summaryLines += "* Swift bin directory: $env:SWIFT_BIN"
+          $summaryLines += "* Swift probe status: $env:SWIFT_STATUS"
           $summaryLines += ''
-          $summaryLines += '## Swift version'
+          $summaryLines += '## Swift version probe output'
           $summaryLines += ''
           $summaryLines += '```'
           $summaryLines += $env:SWIFT_VERSION
