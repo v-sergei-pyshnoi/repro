@@ -1,0 +1,201 @@
+name: Install MSYS2 on Windows ARM
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  install-msys2:
+    name: Install MSYS2 and measure disk usage
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Capture disk state before installation
+        id: before
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $drive = Get-PSDrive -Name C
+          "pre_used_bytes=$([int64]$drive.Used)" >> $env:GITHUB_OUTPUT
+          "pre_free_bytes=$([int64]$drive.Free)" >> $env:GITHUB_OUTPUT
+          "pre_total_bytes=$([int64]($drive.Used + $drive.Free))" >> $env:GITHUB_OUTPUT
+
+      - name: Download and install MSYS2
+        id: install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host "Fetching latest MSYS2 release info..."
+          $assets = (Invoke-RestMethod -Uri "https://api.github.com/repos/msys2/msys2-installer/releases/latest").assets
+          $downloadUri = ($assets | Where-Object { $_.name -match "^msys2-x86_64" -and $_.name.EndsWith(".exe") }).browser_download_url
+          $installerName = Split-Path $downloadUri -Leaf
+          Write-Host "Installer: $installerName"
+          Write-Host "URL: $downloadUri"
+
+          $installerPath = Join-Path $env:RUNNER_TEMP $installerName
+
+          Write-Host "Downloading..."
+          $downloadStart = Get-Date
+          $previousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              if (Test-Path -LiteralPath $installerPath) {
+                Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+              }
+              Write-Host "Download attempt $attempt of 3"
+              & curl.exe --fail --location --silent --show-error --output $installerPath --connect-timeout 30 --max-time 1800 $downloadUri
+              if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $installerPath)) {
+                break
+              }
+              if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
+            }
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeCommandPreference
+          }
+
+          if (-not (Test-Path -LiteralPath $installerPath)) {
+            throw "MSYS2 installer was not downloaded: $installerPath"
+          }
+
+          $downloadEnd = Get-Date
+          $downloadDurationSeconds = [math]::Round(($downloadEnd - $downloadStart).TotalSeconds, 3)
+          $installerSizeBytes = [int64](Get-Item -LiteralPath $installerPath).Length
+          Write-Host "Downloaded $installerSizeBytes bytes in $downloadDurationSeconds seconds"
+
+          Write-Host "Installing MSYS2 to C:\msys64 ..."
+          $installStart = Get-Date
+          & $installerPath in --confirm-command --accept-messages --root C:/msys64
+          if ($LASTEXITCODE -ne 0) {
+            throw "MSYS2 installation failed with exit code $LASTEXITCODE"
+          }
+          $installEnd = Get-Date
+          $installDurationSeconds = [math]::Round(($installEnd - $installStart).TotalSeconds, 3)
+          Write-Host "Installation completed in $installDurationSeconds seconds"
+
+          Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+
+          "installer_name=$installerName" >> $env:GITHUB_OUTPUT
+          "installer_url=$downloadUri" >> $env:GITHUB_OUTPUT
+          "installer_size_bytes=$installerSizeBytes" >> $env:GITHUB_OUTPUT
+          "download_duration_seconds=$downloadDurationSeconds" >> $env:GITHUB_OUTPUT
+          "install_duration_seconds=$installDurationSeconds" >> $env:GITHUB_OUTPUT
+
+      - name: Update MSYS2 packages (first pass)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
+
+          Write-Host "Running pacman -Syyuu (first pass)..."
+          pacman.exe -Syyuu --noconfirm
+          if ($LASTEXITCODE -ne 0) {
+            throw "pacman -Syyuu failed with exit code $LASTEXITCODE"
+          }
+          taskkill /f /fi "MODULES eq msys-2.0.dll"
+
+      - name: Update MSYS2 packages (second pass)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
+
+          Write-Host "Running pacman -Syuu (second pass)..."
+          pacman.exe -Syuu --noconfirm
+          if ($LASTEXITCODE -ne 0) {
+            throw "pacman -Syuu failed with exit code $LASTEXITCODE"
+          }
+          taskkill /f /fi "MODULES eq msys-2.0.dll"
+
+      - name: List installed packages
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\msys64\usr\bin;$env:PATH"
+          Write-Host "Installed MSYS2 packages:"
+          pacman.exe -Q
+
+      - name: Build installation report
+        shell: pwsh
+        env:
+          PRE_USED_BYTES: ${{ steps.before.outputs.pre_used_bytes }}
+          PRE_FREE_BYTES: ${{ steps.before.outputs.pre_free_bytes }}
+          PRE_TOTAL_BYTES: ${{ steps.before.outputs.pre_total_bytes }}
+          INSTALLER_NAME: ${{ steps.install.outputs.installer_name }}
+          INSTALLER_URL: ${{ steps.install.outputs.installer_url }}
+          INSTALLER_SIZE_BYTES: ${{ steps.install.outputs.installer_size_bytes }}
+          DOWNLOAD_DURATION_SECONDS: ${{ steps.install.outputs.download_duration_seconds }}
+          INSTALL_DURATION_SECONDS: ${{ steps.install.outputs.install_duration_seconds }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Get-DirectorySizeBytes {
+            param([string]$Path)
+            if (-not (Test-Path -LiteralPath $Path)) { return [int64]0 }
+            $measure = Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+              Measure-Object -Property Length -Sum
+            return [int64]($measure.Sum ?? 0)
+          }
+
+          $reportDir = Join-Path $env:RUNNER_TEMP 'msys2-install-report'
+          New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+
+          $postDrive = Get-PSDrive -Name C
+          $postUsedBytes  = [int64]$postDrive.Used
+          $postFreeBytes  = [int64]$postDrive.Free
+          $postTotalBytes = [int64]($postDrive.Used + $postDrive.Free)
+
+          $preUsedBytes  = [int64]$env:PRE_USED_BYTES
+          $preFreeBytes  = [int64]$env:PRE_FREE_BYTES
+          $preTotalBytes = [int64]$env:PRE_TOTAL_BYTES
+
+          $msys2SizeBytes = Get-DirectorySizeBytes -Path 'C:\msys64'
+          $usedDeltaBytes = $postUsedBytes - $preUsedBytes
+
+          $summaryLines = @()
+          $summaryLines += '# MSYS2 installation report (windows-11-arm)'
+          $summaryLines += ''
+          $summaryLines += "* Installer: $env:INSTALLER_NAME"
+          $summaryLines += "* Installer URL: $env:INSTALLER_URL"
+          $summaryLines += "* Installer size: $env:INSTALLER_SIZE_BYTES bytes ($([math]::Round([int64]$env:INSTALLER_SIZE_BYTES / 1MB, 1)) MB)"
+          $summaryLines += "* Download duration: $env:DOWNLOAD_DURATION_SECONDS seconds"
+          $summaryLines += "* Installation duration: $env:INSTALL_DURATION_SECONDS seconds"
+          $summaryLines += ''
+          $summaryLines += '## Disk usage on C:'
+          $summaryLines += ''
+          $summaryLines += '| Metric | Before (GB) | After (GB) | Delta (GB) |'
+          $summaryLines += '| --- | ---: | ---: | ---: |'
+          $summaryLines += "| Used | $([math]::Round($preUsedBytes / 1GB, 3)) | $([math]::Round($postUsedBytes / 1GB, 3)) | $([math]::Round($usedDeltaBytes / 1GB, 3)) |"
+          $summaryLines += "| Free | $([math]::Round($preFreeBytes / 1GB, 3)) | $([math]::Round($postFreeBytes / 1GB, 3)) | $([math]::Round(($postFreeBytes - $preFreeBytes) / 1GB, 3)) |"
+          $summaryLines += "| Total | $([math]::Round($preTotalBytes / 1GB, 3)) | $([math]::Round($postTotalBytes / 1GB, 3)) | $([math]::Round(($postTotalBytes - $preTotalBytes) / 1GB, 3)) |"
+          $summaryLines += ''
+          $summaryLines += '## MSYS2 directory size'
+          $summaryLines += ''
+          $summaryLines += "* C:\\msys64 size: $([math]::Round($msys2SizeBytes / 1GB, 3)) GB ($msys2SizeBytes bytes)"
+          $summaryLines += "* Used-space delta after installation: $([math]::Round($usedDeltaBytes / 1GB, 3)) GB"
+
+          $summaryPath = Join-Path $reportDir 'summary.md'
+          $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
+          Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+          [pscustomobject]@{
+            installer_name           = $env:INSTALLER_NAME
+            installer_url            = $env:INSTALLER_URL
+            installer_size_bytes     = [int64]$env:INSTALLER_SIZE_BYTES
+            download_duration_seconds = [double]$env:DOWNLOAD_DURATION_SECONDS
+            install_duration_seconds = [double]$env:INSTALL_DURATION_SECONDS
+            pre_used_bytes           = $preUsedBytes
+            post_used_bytes          = $postUsedBytes
+            used_delta_bytes         = $usedDeltaBytes
+            pre_free_bytes           = $preFreeBytes
+            post_free_bytes          = $postFreeBytes
+            free_delta_bytes         = $postFreeBytes - $preFreeBytes
+            msys2_dir_size_bytes     = $msys2SizeBytes
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $reportDir 'report.json') -Encoding UTF8
+
+      - name: Upload installation report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: msys2-install-report-windows-11-arm
+          path: ${{ runner.temp }}/msys2-install-report
