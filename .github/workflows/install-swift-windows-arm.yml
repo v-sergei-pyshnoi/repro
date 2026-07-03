@@ -48,14 +48,18 @@ jobs:
 
           foreach ($level in 'Machine', 'User') {
             [Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
-              if ($_.Name -eq 'Path') {
-                $_.Value = ("$env:Path;$($_.Value)" -split ';' | Select-Object -Unique) -join ';'
+              $name = $_.Name
+              $value = $_.Value
+
+              if ($name -eq 'Path') {
+                $value = ("$env:Path;$value" -split ';' | Select-Object -Unique) -join ';'
               }
-              $_
-            } | Set-Content -Path { "Env:$($_.Name)" }
+
+              Set-Item -Path "Env:$name" -Value $value
+            }
           }
 
-          Write-Output "$env:Path" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+          Write-Output "$env:Path" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           Get-ChildItem Env: | ForEach-Object {
             "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
