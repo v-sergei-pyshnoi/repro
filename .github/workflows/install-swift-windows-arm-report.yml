@@ -9,6 +9,10 @@ jobs:
   install-swift:
     name: Install Swift and measure disk usage
     runs-on: windows-11-arm
+    env:
+      SWIFT_SEARCH_DEPTH: '6'
+      # Swift installers on Windows can use Program Files or C:\Library\Developer\Toolchains layout.
+      SWIFT_ROOTS_JSON: '["C:\\Program Files\\Swift","C:\\Library\\Developer\\Toolchains","%USERPROFILE%\\AppData\\Local\\Programs\\Swift"]'
 
     steps:
       - name: Capture disk state before installation
@@ -57,12 +61,16 @@ jobs:
 
           $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
           if (-not $swiftExe) {
-            $swiftExe = Get-ChildItem -Path 'C:\Program Files' -Filter swift.exe -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $swiftExe) {
-            $swiftExe = Get-ChildItem -Path 'C:\Library\Developer' -Filter swift.exe -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -First 1 -ExpandProperty FullName
+            # Search depth is limited to keep scan fast while covering known Swift install layout.
+            $searchDepth = [int]$env:SWIFT_SEARCH_DEPTH
+            $searchRoots = ($env:SWIFT_ROOTS_JSON | ConvertFrom-Json) |
+              ForEach-Object { $_ -replace '%USERPROFILE%', $env:USERPROFILE } |
+              Where-Object { Test-Path -LiteralPath $_ }
+
+            if ($searchRoots) {
+              $swiftExe = Get-ChildItem -Path $searchRoots -Filter swift.exe -Recurse -Depth $searchDepth -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+            }
           }
           if (-not $swiftExe) {
             throw 'swift.exe not found after installation'
@@ -104,7 +112,10 @@ jobs:
 
             $measure = Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
               Measure-Object -Property Length -Sum
-            return [int64]($measure.Sum ?? 0)
+            if ($null -eq $measure.Sum) {
+              return [int64]0
+            }
+            return [int64]$measure.Sum
           }
 
           $reportDir = Join-Path $env:RUNNER_TEMP 'swift-install-report'
@@ -119,14 +130,11 @@ jobs:
           $preFreeBytes = [int64]$env:PRE_FREE_BYTES
           $preTotalBytes = [int64]$env:PRE_TOTAL_BYTES
 
-          $swiftRoots = @(
-            'C:\Program Files\Swift',
-            'C:\Library\Developer\Toolchains',
-            'C:\Users\runneradmin\AppData\Local\Programs\Swift'
-          )
-          $swiftRootSizeBytes = 0
+          $swiftRoots = ($env:SWIFT_ROOTS_JSON | ConvertFrom-Json) |
+            ForEach-Object { $_ -replace '%USERPROFILE%', $env:USERPROFILE }
+          $swiftRootsTotalSizeBytes = 0
           foreach ($root in $swiftRoots) {
-            $swiftRootSizeBytes += Get-DirectorySizeBytes -Path $root
+            $swiftRootsTotalSizeBytes += Get-DirectorySizeBytes -Path $root
           }
 
           $usedDeltaBytes = $postUsedBytes - $preUsedBytes
@@ -157,7 +165,7 @@ jobs:
           $summaryLines += ''
           $summaryLines += '## Swift directories total size'
           $summaryLines += ''
-          $summaryLines += "* Estimated Swift footprint (tracked roots): $([math]::Round($swiftRootSizeBytes / 1GB, 3)) GB"
+          $summaryLines += "* Estimated Swift footprint (tracked roots): $([math]::Round($swiftRootsTotalSizeBytes / 1GB, 3)) GB"
           $summaryLines += "* Used-space delta after installation: $usedDeltaGb GB"
           $summaryLines += "* Free-space delta after installation: $([math]::Round($freeDeltaBytes / 1GB, 3)) GB"
 
@@ -176,7 +184,7 @@ jobs:
             pre_free_bytes = $preFreeBytes
             post_free_bytes = $postFreeBytes
             free_delta_bytes = $freeDeltaBytes
-            swift_roots_size_bytes = [int64]$swiftRootSizeBytes
+            swift_roots_size_bytes = [int64]$swiftRootsTotalSizeBytes
           }
           $reportObject | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $reportDir 'report.json') -Encoding UTF8
 
