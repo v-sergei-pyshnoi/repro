@@ -53,20 +53,18 @@ jobs:
 
           $swiftExe = $null
 
-          if (-not $swiftExe) {
-            $candidatePatterns = @(
-              'C:\Program Files\Swift\*\usr\bin\swift.exe',
-              'C:\Library\Developer\Toolchains\*\usr\bin\swift.exe',
-              "$env:USERPROFILE\AppData\Local\Programs\Swift\*\usr\bin\swift.exe"
-            )
+          $candidatePatterns = @(
+            'C:\Program Files\Swift\*\usr\bin\swift.exe',
+            'C:\Library\Developer\Toolchains\*\usr\bin\swift.exe',
+            "$env:USERPROFILE\AppData\Local\Programs\Swift\*\usr\bin\swift.exe"
+          )
 
-            foreach ($pattern in $candidatePatterns) {
-              $match = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
-                Select-Object -First 1 -ExpandProperty FullName
-              if ($match) {
-                $swiftExe = $match
-                break
-              }
+          foreach ($pattern in $candidatePatterns) {
+            $match = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+            if ($match) {
+              $swiftExe = $match
+              break
             }
           }
 
