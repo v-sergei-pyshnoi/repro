@@ -53,27 +53,27 @@ jobs:
 
           $swiftExe = $null
 
-          $candidatePatterns = @(
-            'C:\Program Files\Swift\*\usr\bin\swift.exe',
-            'C:\Library\Developer\Toolchains\*\usr\bin\swift.exe',
-            "$env:USERPROFILE\AppData\Local\Programs\Swift\*\usr\bin\swift.exe"
-          )
-
-          foreach ($pattern in $candidatePatterns) {
-            $match = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
-              Select-Object -First 1 -ExpandProperty FullName
-            if ($match) {
-              $swiftExe = $match
-              break
-            }
+          if (-not $swiftExe) {
+            $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
           }
 
           if (-not $swiftExe) {
-            $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+            $searchDepth = 6
+            $searchRoots = @(
+              'C:\Program Files\Swift',
+              'C:\Library\Developer\Toolchains',
+              "$env:USERPROFILE\AppData\Local\Programs\Swift"
+            ) | Where-Object { Test-Path -LiteralPath $_ }
+
+            if ($searchRoots) {
+              $swiftExe = Get-ChildItem -Path $searchRoots -Filter swift.exe -Recurse -Depth $searchDepth -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+            }
           }
 
           if (-not $swiftExe) {
             throw 'swift.exe was not found after installation'
           }
 
+          Write-Host "Using Swift executable: $swiftExe"
           & $swiftExe --version
