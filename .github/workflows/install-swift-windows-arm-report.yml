@@ -1,0 +1,195 @@
+name: Install Swift on Windows 11 ARM
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  install-swift:
+    name: Install Swift and measure disk usage
+    runs-on: windows-11-arm
+    env:
+      SWIFT_SEARCH_DEPTH: '6'
+      # Swift installers on Windows can use Program Files or C:\Library\Developer\Toolchains layout.
+      SWIFT_ROOTS_JSON: '["C:\\Program Files\\Swift","C:\\Library\\Developer\\Toolchains","%USERPROFILE%\\AppData\\Local\\Programs\\Swift"]'
+
+    steps:
+      - name: Capture disk state before installation
+        id: before
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $drive = Get-PSDrive -Name C
+          "pre_used_bytes=$([int64]$drive.Used)" >> $env:GITHUB_OUTPUT
+          "pre_free_bytes=$([int64]$drive.Free)" >> $env:GITHUB_OUTPUT
+          "pre_total_bytes=$([int64]($drive.Used + $drive.Free))" >> $env:GITHUB_OUTPUT
+
+      - name: Install Swift via winget
+        id: install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          winget --version
+          winget source update
+
+          $packageCandidates = @(
+            'Swift.Toolchain',
+            'Swiftlang.Swift'
+          )
+          $installArgs = @(
+            '--exact',
+            '--silent',
+            '--accept-package-agreements',
+            '--accept-source-agreements',
+            '--scope', 'machine'
+          )
+
+          $selectedPackage = $null
+          foreach ($packageId in $packageCandidates) {
+            Write-Host "Trying to install package: $packageId"
+            & winget install --id $packageId @installArgs
+            if ($LASTEXITCODE -eq 0) {
+              $selectedPackage = $packageId
+              break
+            }
+          }
+
+          if (-not $selectedPackage) {
+            throw "Failed to install Swift from all package candidates: $($packageCandidates -join ', ')"
+          }
+
+          $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+          if (-not $swiftExe) {
+            # Search depth is limited to keep scan fast while covering known Swift install layout.
+            $searchDepth = [int]$env:SWIFT_SEARCH_DEPTH
+            $searchRoots = ($env:SWIFT_ROOTS_JSON | ConvertFrom-Json) |
+              ForEach-Object { $_ -replace '%USERPROFILE%', $env:USERPROFILE } |
+              Where-Object { Test-Path -LiteralPath $_ }
+
+            if ($searchRoots) {
+              $swiftExe = Get-ChildItem -Path $searchRoots -Filter swift.exe -Recurse -Depth $searchDepth -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+            }
+          }
+          if (-not $swiftExe) {
+            throw 'swift.exe not found after installation'
+          }
+
+          $swiftBin = Split-Path -Path $swiftExe -Parent
+          "$swiftBin" >> $env:GITHUB_PATH
+
+          $swiftVersion = & $swiftExe --version
+          "package_id=$selectedPackage" >> $env:GITHUB_OUTPUT
+          "swift_exe=$swiftExe" >> $env:GITHUB_OUTPUT
+          "swift_bin=$swiftBin" >> $env:GITHUB_OUTPUT
+          "swift_version<<EOF" >> $env:GITHUB_OUTPUT
+          $swiftVersion >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
+
+      - name: Build installation report
+        shell: pwsh
+        env:
+          PRE_USED_BYTES: ${{ steps.before.outputs.pre_used_bytes }}
+          PRE_FREE_BYTES: ${{ steps.before.outputs.pre_free_bytes }}
+          PRE_TOTAL_BYTES: ${{ steps.before.outputs.pre_total_bytes }}
+          PACKAGE_ID: ${{ steps.install.outputs.package_id }}
+          SWIFT_EXE: ${{ steps.install.outputs.swift_exe }}
+          SWIFT_BIN: ${{ steps.install.outputs.swift_bin }}
+          SWIFT_VERSION: ${{ steps.install.outputs.swift_version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Get-DirectorySizeBytes {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string]$Path
+            )
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return [int64]0
+            }
+
+            $measure = Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+              Measure-Object -Property Length -Sum
+            if ($null -eq $measure.Sum) {
+              return [int64]0
+            }
+            return [int64]$measure.Sum
+          }
+
+          $reportDir = Join-Path $env:RUNNER_TEMP 'swift-install-report'
+          New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+
+          $postDrive = Get-PSDrive -Name C
+          $postUsedBytes = [int64]$postDrive.Used
+          $postFreeBytes = [int64]$postDrive.Free
+          $postTotalBytes = [int64]($postDrive.Used + $postDrive.Free)
+
+          $preUsedBytes = [int64]$env:PRE_USED_BYTES
+          $preFreeBytes = [int64]$env:PRE_FREE_BYTES
+          $preTotalBytes = [int64]$env:PRE_TOTAL_BYTES
+
+          $swiftRoots = ($env:SWIFT_ROOTS_JSON | ConvertFrom-Json) |
+            ForEach-Object { $_ -replace '%USERPROFILE%', $env:USERPROFILE }
+          $swiftRootsTotalSizeBytes = 0
+          foreach ($root in $swiftRoots) {
+            $swiftRootsTotalSizeBytes += Get-DirectorySizeBytes -Path $root
+          }
+
+          $usedDeltaBytes = $postUsedBytes - $preUsedBytes
+          $freeDeltaBytes = $postFreeBytes - $preFreeBytes
+          $usedDeltaGb = [math]::Round($usedDeltaBytes / 1GB, 3)
+
+          $summaryLines = @()
+          $summaryLines += '# Swift installation report (windows-11-arm)'
+          $summaryLines += ''
+          $summaryLines += '* Installer: winget'
+          $summaryLines += "* Package ID: $env:PACKAGE_ID"
+          $summaryLines += "* Swift executable: $env:SWIFT_EXE"
+          $summaryLines += "* Swift bin directory: $env:SWIFT_BIN"
+          $summaryLines += ''
+          $summaryLines += '## Swift version'
+          $summaryLines += ''
+          $summaryLines += '```'
+          $summaryLines += $env:SWIFT_VERSION
+          $summaryLines += '```'
+          $summaryLines += ''
+          $summaryLines += '## Disk usage on C:'
+          $summaryLines += ''
+          $summaryLines += '| Metric | Before (GB) | After (GB) | Delta (GB) |'
+          $summaryLines += '| --- | ---: | ---: | ---: |'
+          $summaryLines += "| Used | $([math]::Round($preUsedBytes / 1GB, 3)) | $([math]::Round($postUsedBytes / 1GB, 3)) | $([math]::Round(($postUsedBytes - $preUsedBytes) / 1GB, 3)) |"
+          $summaryLines += "| Free | $([math]::Round($preFreeBytes / 1GB, 3)) | $([math]::Round($postFreeBytes / 1GB, 3)) | $([math]::Round(($postFreeBytes - $preFreeBytes) / 1GB, 3)) |"
+          $summaryLines += "| Total | $([math]::Round($preTotalBytes / 1GB, 3)) | $([math]::Round($postTotalBytes / 1GB, 3)) | $([math]::Round(($postTotalBytes - $preTotalBytes) / 1GB, 3)) |"
+          $summaryLines += ''
+          $summaryLines += '## Swift directories total size'
+          $summaryLines += ''
+          $summaryLines += "* Estimated Swift footprint (tracked roots): $([math]::Round($swiftRootsTotalSizeBytes / 1GB, 3)) GB"
+          $summaryLines += "* Used-space delta after installation: $usedDeltaGb GB"
+          $summaryLines += "* Free-space delta after installation: $([math]::Round($freeDeltaBytes / 1GB, 3)) GB"
+
+          $summaryPath = Join-Path $reportDir 'summary.md'
+          $summaryLines | Set-Content -Path $summaryPath -Encoding UTF8
+          Get-Content -Path $summaryPath | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+          $reportObject = [pscustomobject]@{
+            package_id = $env:PACKAGE_ID
+            swift_exe = $env:SWIFT_EXE
+            swift_bin = $env:SWIFT_BIN
+            swift_version = $env:SWIFT_VERSION
+            pre_used_bytes = $preUsedBytes
+            post_used_bytes = $postUsedBytes
+            used_delta_bytes = $usedDeltaBytes
+            pre_free_bytes = $preFreeBytes
+            post_free_bytes = $postFreeBytes
+            free_delta_bytes = $freeDeltaBytes
+            swift_roots_size_bytes = [int64]$swiftRootsTotalSizeBytes
+          }
+          $reportObject | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $reportDir 'report.json') -Encoding UTF8
+
+      - name: Upload installation report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-install-report-windows-11-arm
+          path: ${{ runner.temp }}/swift-install-report
