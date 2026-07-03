@@ -25,6 +25,31 @@ jobs:
           "pre_free_bytes=$([int64]$drive.Free)" >> $env:GITHUB_OUTPUT
           "pre_total_bytes=$([int64]($drive.Used + $drive.Free))" >> $env:GITHUB_OUTPUT
 
+      - name: Ensure winget is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((Get-Command winget -ErrorAction SilentlyContinue) -ne $null) {
+            Write-Host "winget already in PATH: $(winget --version)"
+          } else {
+            # On some runner images winget is installed as an AppX package but not on PATH
+            $appxDir = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
+            $appxWinget = "$appxDir\winget.exe"
+            if (Test-Path $appxWinget) {
+              "$appxDir" >> $env:GITHUB_PATH
+              Write-Host "Added AppX winget location to GITHUB_PATH: $appxWinget"
+            } else {
+              # Attempt to register the pre-staged DesktopAppInstaller package
+              Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+              if (Test-Path $appxWinget) {
+                "$appxDir" >> $env:GITHUB_PATH
+                Write-Host "Registered DesktopAppInstaller; added AppX winget location to GITHUB_PATH"
+              } else {
+                throw "winget could not be found or installed"
+              }
+            }
+          }
+
       - name: Install Swift via winget
         id: install
         shell: pwsh
