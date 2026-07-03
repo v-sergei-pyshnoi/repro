@@ -46,44 +46,20 @@ jobs:
             throw "Installer failed with exit code $($process.ExitCode)"
           }
 
+          # Swift's Windows installer updates PATH outside the current process, so gather only the new
+          # Machine/User PATH segments here and expose them to subsequent steps via GITHUB_PATH.
           $seenPathEntries = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-          $originalPathEntries = [System.Collections.Generic.List[string]]::new()
           foreach ($pathEntry in ($env:Path -split ';' | Where-Object { $_ })) {
-            if ($seenPathEntries.Add($pathEntry)) {
-              $originalPathEntries.Add($pathEntry)
-            }
+            $null = $seenPathEntries.Add($pathEntry)
           }
-
-          $newPathEntries = [System.Collections.Generic.List[string]]::new()
 
           foreach ($level in 'Machine', 'User') {
-            [Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
-              $name = $_.Name
-              $value = $_.Value
-
-              if ($name -eq 'Path') {
-                foreach ($pathEntry in ($value -split ';' | Where-Object { $_ })) {
-                  if ($seenPathEntries.Add($pathEntry)) {
-                    $newPathEntries.Add($pathEntry)
-                  }
-                }
-              } else {
-                Set-Item -Path "Env:$name" -Value $value
+            $installedPath = [Environment]::GetEnvironmentVariable('Path', $level)
+            foreach ($pathEntry in ($installedPath -split ';' | Where-Object { $_ })) {
+              if ($seenPathEntries.Add($pathEntry)) {
+                $pathEntry | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
               }
             }
-          }
-
-          if ($newPathEntries.Count -gt 0) {
-            $mergedPath = (@($newPathEntries) + @($originalPathEntries)) -join ';'
-            Set-Item -Path 'Env:Path' -Value $mergedPath
-
-            foreach ($pathEntry in $newPathEntries) {
-              $pathEntry | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            }
-          }
-
-          Get-ChildItem Env: | ForEach-Object {
-            "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Print Swift version
