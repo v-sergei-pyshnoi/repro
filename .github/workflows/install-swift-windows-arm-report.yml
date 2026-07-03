@@ -36,11 +36,12 @@ jobs:
           $installerUrl = $env:SWIFT_INSTALLER_URL
           $installerFileName = [System.IO.Path]::GetFileName($installerUrl)
           $installerPath = Join-Path $env:RUNNER_TEMP $installerFileName
+          $downloadTimeoutSec = 1800
 
           Write-Host "Downloading Swift installer: $installerUrl"
           try {
-            $headResponse = Invoke-WebRequest -Uri $installerUrl -Method Head -ErrorAction Stop
-            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -ErrorAction Stop
+            $headResponse = Invoke-WebRequest -Uri $installerUrl -Method Head -TimeoutSec $downloadTimeoutSec -ErrorAction Stop
+            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -TimeoutSec $downloadTimeoutSec -ErrorAction Stop
           } catch {
             throw "Failed to download Swift installer from $installerUrl. Error: $($_.Exception.Message)"
           }
