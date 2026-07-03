@@ -51,11 +51,23 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $swiftExe = Get-ChildItem -Path 'C:\Program Files\Swift','C:\Library\Developer\Toolchains' -Filter swift.exe -Recurse -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
+          $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
 
           if (-not $swiftExe) {
-            $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+            $candidatePatterns = @(
+              'C:\Program Files\Swift\*\usr\bin\swift.exe',
+              'C:\Library\Developer\Toolchains\*\usr\bin\swift.exe',
+              "$env:USERPROFILE\AppData\Local\Programs\Swift\*\usr\bin\swift.exe"
+            )
+
+            foreach ($pattern in $candidatePatterns) {
+              $match = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+              if ($match) {
+                $swiftExe = $match
+                break
+              }
+            }
           }
 
           if (-not $swiftExe) {
