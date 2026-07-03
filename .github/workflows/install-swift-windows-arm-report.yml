@@ -11,6 +11,7 @@ jobs:
     runs-on: windows-11-arm
     env:
       SWIFT_SEARCH_DEPTH: '6'
+      SWIFT_INSTALLER_URL: 'https://download.swift.org/swift-6.3.3-release/windows10-arm64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10-arm64.exe'
       # Swift installers on Windows can use Program Files or C:\Library\Developer\Toolchains layout.
       SWIFT_ROOTS_JSON: '["C:\\Program Files\\Swift","C:\\Library\\Developer\\Toolchains","%USERPROFILE%\\AppData\\Local\\Programs\\Swift"]'
 
@@ -30,14 +31,23 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $installerUrl = 'https://download.swift.org/swift-6.3.3-release/windows10-arm64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10-arm64.exe'
-          $installerPath = Join-Path $env:RUNNER_TEMP 'swift-6.3.3-RELEASE-windows10-arm64.exe'
+          $installerUrl = $env:SWIFT_INSTALLER_URL
+          $installerFileName = [System.IO.Path]::GetFileName($installerUrl)
+          $installerPath = Join-Path $env:RUNNER_TEMP $installerFileName
 
           Write-Host "Downloading Swift installer: $installerUrl"
           Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
 
           if (-not (Test-Path -LiteralPath $installerPath)) {
             throw "Swift installer was not downloaded: $installerPath"
+          }
+
+          $signature = Get-AuthenticodeSignature -FilePath $installerPath
+          if ($signature.Status -ne 'Valid') {
+            throw "Installer signature is not valid. Status: $($signature.Status)"
+          }
+          if (-not $signature.SignerCertificate -or -not $signature.SignerCertificate.Subject.Contains('Apple')) {
+            throw "Installer signer is unexpected: $($signature.SignerCertificate.Subject)"
           }
 
           $installStart = Get-Date
