@@ -12,6 +12,7 @@ jobs:
     env:
       SWIFT_SEARCH_DEPTH: '6'
       SWIFT_INSTALLER_URL: 'https://download.swift.org/swift-6.3.3-release/windows10-arm64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10-arm64.exe'
+      # Keep this in sync with SWIFT_INSTALLER_URL whenever Swift version is updated.
       SWIFT_INSTALLER_EXPECTED_BYTES: '1363698552'
       # Swift installers on Windows can use Program Files or C:\Library\Developer\Toolchains layout.
       SWIFT_ROOTS_JSON: '["C:\\Program Files\\Swift","C:\\Library\\Developer\\Toolchains","%USERPROFILE%\\AppData\\Local\\Programs\\Swift"]'
@@ -38,7 +39,8 @@ jobs:
 
           Write-Host "Downloading Swift installer: $installerUrl"
           try {
-            $downloadResponse = Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -ErrorAction Stop
+            $headResponse = Invoke-WebRequest -Uri $installerUrl -Method Head -ErrorAction Stop
+            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -ErrorAction Stop
           } catch {
             throw "Failed to download Swift installer from $installerUrl. Error: $($_.Exception.Message)"
           }
@@ -53,7 +55,7 @@ jobs:
             throw "Downloaded installer size mismatch. Expected: $expectedInstallerSizeBytes bytes. Actual: $downloadedInstallerSizeBytes bytes."
           }
 
-          $headerContentLength = [string]$downloadResponse.Headers['Content-Length']
+          $headerContentLength = [string]$headResponse.Headers['Content-Length']
           if ($headerContentLength) {
             $responseContentLength = [int64]$headerContentLength
             if ($responseContentLength -ne $downloadedInstallerSizeBytes) {
