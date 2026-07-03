@@ -29,7 +29,7 @@ jobs:
 
           Write-Host "Fetching latest MSYS2 release info..."
           $assets = (Invoke-RestMethod -Uri "https://api.github.com/repos/msys2/msys2-installer/releases/latest").assets
-          $downloadUri = ($assets | Where-Object { $_.name -match "^msys2-x86_64" -and $_.name.EndsWith(".exe") }).browser_download_url
+          $downloadUri = ($assets | Where-Object { $_.name -match "^msys2-arm64" -and $_.name.EndsWith(".exe") }).browser_download_url
           $installerName = Split-Path $downloadUri -Leaf
           Write-Host "Installer: $installerName"
           Write-Host "URL: $downloadUri"
