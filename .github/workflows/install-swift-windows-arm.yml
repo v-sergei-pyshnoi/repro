@@ -1,0 +1,79 @@
+name: Install Swift on Windows ARM
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  install-swift:
+    runs-on: windows-11-arm
+    env:
+      SWIFT_INSTALLER_URL: https://download.swift.org/swift-6.3.3-release/windows10-arm64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10-arm64.exe
+
+    steps:
+      - name: Download Swift installer
+        id: download
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installerUrl = $env:SWIFT_INSTALLER_URL
+          $installerName = [System.IO.Path]::GetFileName($installerUrl)
+          $installerPath = Join-Path $env:RUNNER_TEMP $installerName
+
+          Write-Host "Downloading $installerUrl"
+          Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
+
+          if (-not (Test-Path -LiteralPath $installerPath)) {
+            throw "Installer was not downloaded: $installerPath"
+          }
+
+          $signature = Get-AuthenticodeSignature -FilePath $installerPath
+          if ($signature.Status -ne 'Valid') {
+            throw "Invalid installer signature: $($signature.Status)"
+          }
+
+          "installer_path=$installerPath" >> $env:GITHUB_OUTPUT
+
+      - name: Install Swift silently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installerPath = "${{ steps.download.outputs.installer_path }}"
+
+          $process = Start-Process -FilePath $installerPath -ArgumentList '/quiet','/norestart' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Installer failed with exit code $($process.ExitCode)"
+          }
+
+      - name: Locate swift.exe and print version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $swiftExe = $null
+
+          $candidatePatterns = @(
+            'C:\Program Files\Swift\*\usr\bin\swift.exe',
+            'C:\Library\Developer\Toolchains\*\usr\bin\swift.exe',
+            "$env:USERPROFILE\AppData\Local\Programs\Swift\*\usr\bin\swift.exe"
+          )
+
+          foreach ($pattern in $candidatePatterns) {
+            $match = Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1 -ExpandProperty FullName
+            if ($match) {
+              $swiftExe = $match
+              break
+            }
+          }
+
+          if (-not $swiftExe) {
+            $swiftExe = (Get-Command swift.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+          }
+
+          if (-not $swiftExe) {
+            throw 'swift.exe was not found after installation'
+          }
+
+          & $swiftExe --version
