@@ -37,11 +37,38 @@ jobs:
           $installerFileName = [System.IO.Path]::GetFileName($installerUrl)
           $installerPath = Join-Path $env:RUNNER_TEMP $installerFileName
           $downloadTimeoutSec = 1800
+          $downloadRetryCount = 3
 
           Write-Host "Downloading Swift installer: $installerUrl"
           try {
             $headResponse = Invoke-WebRequest -Uri $installerUrl -Method Head -TimeoutSec $downloadTimeoutSec -ErrorAction Stop
-            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -TimeoutSec $downloadTimeoutSec -ErrorAction Stop
+            $downloaded = $false
+            $previousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+            try {
+              $PSNativeCommandUseErrorActionPreference = $false
+              for ($attempt = 1; $attempt -le $downloadRetryCount; $attempt++) {
+                if (Test-Path -LiteralPath $installerPath) {
+                  Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+                }
+
+                Write-Host "Download attempt $attempt of $downloadRetryCount"
+                & curl.exe --fail --location --silent --show-error --output $installerPath --connect-timeout 30 --max-time $downloadTimeoutSec $installerUrl
+                if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $installerPath)) {
+                  $downloaded = $true
+                  break
+                }
+
+                if ($attempt -lt $downloadRetryCount) {
+                  Start-Sleep -Seconds (5 * $attempt)
+                }
+              }
+            } finally {
+              $PSNativeCommandUseErrorActionPreference = $previousNativeCommandPreference
+            }
+
+            if (-not $downloaded) {
+              throw "curl.exe failed to download the installer after $downloadRetryCount attempts."
+            }
           } catch {
             throw "Failed to download Swift installer from $installerUrl. Error: $($_.Exception.Message)"
           }
