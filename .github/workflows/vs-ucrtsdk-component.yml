@@ -1,0 +1,89 @@
+name: Remove and reinstall VC UCRT SDK component
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ucrtsdk-component:
+    name: VC.Runtime.UCRTSDK / windows-latest
+    runs-on: windows-latest
+
+    env:
+      COMPONENT_ID: Microsoft.Component.VC.Runtime.UCRTSDK
+
+    steps:
+      - name: Locate Visual Studio and the installer
+        id: locate
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Error "vswhere.exe not found at $vswhere"
+            exit 1
+          }
+          $installPath = & $vswhere -latest -products * -property installationPath
+          if ([string]::IsNullOrWhiteSpace($installPath)) {
+            Write-Error "Could not determine the Visual Studio installation path."
+            exit 1
+          }
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          if (-not (Test-Path $installer)) {
+            Write-Error "vs_installer.exe not found at $installer"
+            exit 1
+          }
+          Write-Host "Visual Studio installation path: $installPath"
+          "installPath=$installPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "installer=$installer"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Remove component ${{ env.COMPONENT_ID }}
+        shell: pwsh
+        run: |
+          $installer = '${{ steps.locate.outputs.installer }}'
+          $installPath = '${{ steps.locate.outputs.installPath }}'
+          Write-Host "Removing component $env:COMPONENT_ID ..."
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList @(
+              'modify',
+              '--installPath', "`"$installPath`"",
+              '--remove', $env:COMPONENT_ID,
+              '--quiet', '--norestart', '--force', '--wait'
+            ) `
+            -Wait -PassThru
+          Write-Host "vs_installer exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+            Write-Error "Removing component failed with exit code $($process.ExitCode)"
+            exit $process.ExitCode
+          }
+
+      - name: Reinstall component ${{ env.COMPONENT_ID }}
+        shell: pwsh
+        run: |
+          $installer = '${{ steps.locate.outputs.installer }}'
+          $installPath = '${{ steps.locate.outputs.installPath }}'
+          Write-Host "Installing component $env:COMPONENT_ID ..."
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList @(
+              'modify',
+              '--installPath', "`"$installPath`"",
+              '--add', $env:COMPONENT_ID,
+              '--quiet', '--norestart', '--force', '--wait'
+            ) `
+            -Wait -PassThru
+          Write-Host "vs_installer exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+            Write-Error "Installing component failed with exit code $($process.ExitCode)"
+            exit $process.ExitCode
+          }
+
+      - name: Verify installed components
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $found = & $vswhere -latest -products * -requires $env:COMPONENT_ID -property installationPath
+          if ([string]::IsNullOrWhiteSpace($found)) {
+            Write-Warning "Component $env:COMPONENT_ID does not appear to be installed."
+          } else {
+            Write-Host "Component $env:COMPONENT_ID is installed at: $found"
+          }
