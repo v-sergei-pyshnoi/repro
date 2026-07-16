@@ -47,7 +47,7 @@ jobs:
               'modify',
               '--installPath', "`"$installPath`"",
               '--remove', $env:COMPONENT_ID,
-              '--quiet', '--norestart', '--force', '--wait'
+              '--quiet', '--norestart', '--force'
             ) `
             -Wait -PassThru
           Write-Host "vs_installer exit code: $($process.ExitCode)"
@@ -68,7 +68,7 @@ jobs:
               'modify',
               '--installPath', "`"$installPath`"",
               '--add', $env:COMPONENT_ID,
-              '--quiet', '--norestart', '--force', '--wait'
+              '--quiet', '--norestart', '--force'
             ) `
             -Wait -PassThru
           Write-Host "vs_installer exit code: $($process.ExitCode)"
