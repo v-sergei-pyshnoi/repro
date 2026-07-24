@@ -1,0 +1,26 @@
+name: WinDirStat scan
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  scan:
+    name: "Scan C: with WinDirStat"
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run WinDirStat scan
+        shell: pwsh
+        run: |
+          ./scripts/Run-WinDirStatScan.ps1 -ScanPath 'C:\' -ReportPath 'C:\Reports\scan.csv'
+
+      - name: Upload scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: windirstat-scan
+          path: C:\Reports\scan.csv
