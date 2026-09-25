@@ -1,0 +1,60 @@
+name: Create SBOM for the release
+
+run-name: Collecting SBOM for ubuntu-slim - ${{ inputs.imageVersion || 'unknown version' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      imageVersion:
+        description: 'Expected ImageVersion of the ubuntu-slim runner (optional)'
+        required: false
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  building-sbom:
+    runs-on: ubuntu-slim
+    env:
+      AGENT_SPEC: ubuntu-slim
+      IMAGE_VERSION: ${{ inputs.imageVersion }}
+    steps:
+      - name: Available image version check
+        if: ${{ env.IMAGE_VERSION != '' }}
+        run: |
+          expected_version="$IMAGE_VERSION"
+          runner_version="$ImageVersion"
+
+          # Determine what parts to compare
+          IFS='.' read -ra expected_parts <<< "$expected_version"
+          IFS='.' read -ra runner_parts <<< "$runner_version"
+
+          min_length=${#expected_parts[@]}
+          if [ ${#runner_parts[@]} -lt "$min_length" ]; then
+            min_length=${#runner_parts[@]}
+          fi
+
+          expected_comparable=$(IFS='.'; echo "${expected_parts[*]:0:$min_length}")
+          runner_comparable=$(IFS='.'; echo "${runner_parts[*]:0:$min_length}")
+
+          if [ "$expected_comparable" != "$runner_comparable" ]; then
+            echo "Version mismatch: Expected version '$expected_version' doesn't match runner version '$runner_version'" >&2
+            exit 1
+          fi
+
+      - name: Install SYFT tool on Ubuntu
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run SYFT on Ubuntu
+        run: syft dir:/ -vv -o spdx-json=sbom.json
+
+      - name: Compress SBOM file
+        run: zip sbom.json.zip sbom.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ env.AGENT_SPEC }}-${{ inputs.imageVersion || 'unknown-version' }}
+          path: sbom.json.zip
+          if-no-files-found: error
