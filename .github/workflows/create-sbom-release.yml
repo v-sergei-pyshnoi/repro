@@ -1,0 +1,53 @@
+name: Create SBOM for the release
+
+run-name: Collecting SBOM for ubuntu-slim - ${{ github.event.client_payload.imageVersion || 'unknown version' }}
+
+on:
+  repository_dispatch:
+    types: [generate-sbom]
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  building-sbom:
+    runs-on: ubuntu-slim
+    env:
+      AGENT_SPEC: ubuntu-slim
+      IMAGE_VERSION: ${{ github.event.client_payload.imageVersion }}
+    steps:
+      - name: Available image version check
+        if: ${{ env.IMAGE_VERSION != '' }}
+        run: |
+          $expectedVersion = $env:IMAGE_VERSION
+          $runnerVersion = $env:ImageVersion
+
+          # Split versions by dot
+          $expectedParts = $expectedVersion.Split('.')
+          $runnerParts = $runnerVersion.Split('.')
+
+          # Determine what parts to compare
+          $minLength = [Math]::Min($expectedParts.Length, $runnerParts.Length)
+          $expectedComparable = $expectedParts[0..($minLength-1)] -join '.'
+          $runnerComparable = $runnerParts[0..($minLength-1)] -join '.'
+
+          # Perform the comparison
+          if ($expectedComparable -ne $runnerComparable) {
+            throw "Version mismatch: Expected version '$expectedVersion' doesn't match runner version '$runnerVersion'"
+          }
+
+      - name: Install SYFT tool on Ubuntu
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run SYFT on Ubuntu
+        run: syft dir:/ -vv -o spdx-json=sbom.json
+
+      - name: Compress SBOM file
+        run: Compress-Archive sbom.json sbom.json.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ env.AGENT_SPEC }}-${{ github.event.client_payload.imageVersion || 'unknown-version' }}
+          path: sbom.json.zip
+          if-no-files-found: error
