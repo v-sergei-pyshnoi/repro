@@ -1,41 +1,48 @@
 name: Create SBOM for the release
 
-run-name: Collecting SBOM for ubuntu-slim - ${{ github.event.client_payload.imageVersion || 'unknown version' }}
+run-name: Collecting SBOM for ubuntu-slim - ${{ inputs.imageVersion || 'unknown version' }}
 
 on:
-  repository_dispatch:
-    types: [generate-sbom]
+  workflow_dispatch:
+    inputs:
+      imageVersion:
+        description: 'Expected ImageVersion of the ubuntu-slim runner (optional)'
+        required: false
+        type: string
 
 defaults:
   run:
-    shell: pwsh
+    shell: bash
 
 jobs:
   building-sbom:
     runs-on: ubuntu-slim
     env:
       AGENT_SPEC: ubuntu-slim
-      IMAGE_VERSION: ${{ github.event.client_payload.imageVersion }}
+      IMAGE_VERSION: ${{ inputs.imageVersion }}
     steps:
       - name: Available image version check
         if: ${{ env.IMAGE_VERSION != '' }}
         run: |
-          $expectedVersion = $env:IMAGE_VERSION
-          $runnerVersion = $env:ImageVersion
-
-          # Split versions by dot
-          $expectedParts = $expectedVersion.Split('.')
-          $runnerParts = $runnerVersion.Split('.')
+          expected_version="$IMAGE_VERSION"
+          runner_version="$ImageVersion"
 
           # Determine what parts to compare
-          $minLength = [Math]::Min($expectedParts.Length, $runnerParts.Length)
-          $expectedComparable = $expectedParts[0..($minLength-1)] -join '.'
-          $runnerComparable = $runnerParts[0..($minLength-1)] -join '.'
+          IFS='.' read -ra expected_parts <<< "$expected_version"
+          IFS='.' read -ra runner_parts <<< "$runner_version"
 
-          # Perform the comparison
-          if ($expectedComparable -ne $runnerComparable) {
-            throw "Version mismatch: Expected version '$expectedVersion' doesn't match runner version '$runnerVersion'"
-          }
+          min_length=${#expected_parts[@]}
+          if [ ${#runner_parts[@]} -lt "$min_length" ]; then
+            min_length=${#runner_parts[@]}
+          fi
+
+          expected_comparable=$(IFS='.'; echo "${expected_parts[*]:0:$min_length}")
+          runner_comparable=$(IFS='.'; echo "${runner_parts[*]:0:$min_length}")
+
+          if [ "$expected_comparable" != "$runner_comparable" ]; then
+            echo "Version mismatch: Expected version '$expected_version' doesn't match runner version '$runner_version'" >&2
+            exit 1
+          fi
 
       - name: Install SYFT tool on Ubuntu
         run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
@@ -44,10 +51,10 @@ jobs:
         run: syft dir:/ -vv -o spdx-json=sbom.json
 
       - name: Compress SBOM file
-        run: Compress-Archive sbom.json sbom.json.zip
+        run: zip sbom.json.zip sbom.json
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sbom-${{ env.AGENT_SPEC }}-${{ github.event.client_payload.imageVersion || 'unknown-version' }}
+          name: sbom-${{ env.AGENT_SPEC }}-${{ inputs.imageVersion || 'unknown-version' }}
           path: sbom.json.zip
           if-no-files-found: error
