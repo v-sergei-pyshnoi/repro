@@ -2,6 +2,7 @@ name: Repro MongoDB service connection on Ubuntu x64
 
 # https://github.com/actions/runner-images/issues/15005
 # Compare pinned MongoDB versions on the same VM without changing rseq settings.
+# 9.0.4 contains SERVER-131779; 8.3.14 is not yet published.
 # Artifacts include raw evidence; the summary distinguishes a version gate from a crash.
 on:
   workflow_dispatch:
@@ -68,6 +69,7 @@ jobs:
           MONGO_CONTAINER: ${{ job.services.mongo.id }}
           MATRIX_OS: ${{ matrix.os }}
           DIAGNOSTICS_DIR: ${{ runner.temp }}/mongo-diagnostics
+          FIXED_MONGO_IMAGE: mongo:9.0.4@sha256:b609cdfba3a865331378cc4158bc52522a3bf176d59a7ff2c43fab52f5d9d5cb
         run: |
           node .github/scripts/15005-diagnostics.cjs
 

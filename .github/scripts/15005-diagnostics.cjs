@@ -9,6 +9,16 @@ function hasGuard(logs) {
   return /"id"\s*:\s*12257600\b/.test(logs);
 }
 
+function ubuntuUpstreamVersion(text) {
+  return text?.match(/^Ubuntu \S+ (\d+\.\d+\.\d+)\s*$/m)?.[1] || null;
+}
+
+function hasKernelFix(version) {
+  if (!version) return false;
+  const [major, minor, patch] = version.split('.').map(Number);
+  return major > 7 || (major === 7 && (minor > 0 || patch >= 14));
+}
+
 function classify(result) {
   if (result.infrastructureError || result.collectionError) return 'Infrastructure/collection error; inconclusive';
   if (hasGuard(result.logs)) {
@@ -22,18 +32,26 @@ function classify(result) {
   return 'Incomplete observation; inconclusive';
 }
 
-function comparison(results) {
+function comparison(results, hostUpstreamVersion) {
   const old = results.find(result => result.label === '8.3.13');
-  const updated = results.find(result => result.label === '8.3.14');
+  const updated = results.find(result => result.label === '9.0.4');
   if (!old || !updated || old.infrastructureError || updated.infrastructureError ||
       old.collectionError || updated.collectionError) {
     return 'Pinned comparison incomplete; no kernel attribution is possible.';
   }
   const passed = result => classify(result).startsWith('Passed');
   if (hasGuard(old.logs) && passed(updated)) {
-    return '8.3.13 was blocked by the SERVER-121912 guard, while 8.3.14 passed on the same VM. ' +
-      'This supports the Ubuntu kernel-version detection issue SERVER-131779, not proof of ' +
-      'an unfixed kernel rseq defect. Confirm kernel patch provenance before declaring compatibility.';
+    const matchingFixedKernel = hasKernelFix(hostUpstreamVersion) &&
+      old.upstreamVersion === hostUpstreamVersion && updated.upstreamVersion === hostUpstreamVersion;
+    return '8.3.13 was blocked by the SERVER-121912 guard, while 9.0.4 passed on the same VM. ' +
+      (matchingFixedKernel
+        ? `Host and both containers report upstream ${hostUpstreamVersion}, in the fixed kernel range. ` +
+          'The evidence supports the Ubuntu kernel-version false rejection addressed by SERVER-131779, ' +
+          'rather than an observed unfixed rseq crash. '
+        : 'Kernel signature evidence is missing, inconsistent, or outside the known fixed range; ' +
+          'SERVER-131779 is a candidate, but kernel attribution remains inconclusive. ') +
+      'This is an 8.x versus 9.x comparison, not a single-patch A/B test; other release changes ' +
+      'are not isolated. No general production upgrade recommendation is implied.';
   }
   if (hasGuard(old.logs) && hasGuard(updated.logs)) {
     return 'Both pinned versions triggered the compatibility guard. Verify the upstream kernel ' +
@@ -84,8 +102,13 @@ async function main() {
   save('runner.json', JSON.stringify(metadata, null, 2));
   const kernel = command('host-uname.txt', 'uname', ['-a']).stdout?.trim();
   for (const file of ['/etc/os-release', '/proc/version', '/proc/version_signature']) {
-    command(`host-${path.basename(file)}.txt`, 'cat', [file]);
+    const evidence = command(`host-${path.basename(file)}.txt`, 'cat', [file]);
+    if (file === '/proc/version_signature' && evidence.status === 0) {
+      metadata.kernelSignature = evidence.stdout.trim();
+      metadata.upstreamVersion = ubuntuUpstreamVersion(evidence.stdout);
+    }
   }
+  save('runner.json', JSON.stringify(metadata, null, 2));
   const release = command('host-kernel-release.txt', 'uname', ['-r']).stdout?.trim();
   if (release) {
     const packageName = `linux-image-${release}`;
@@ -105,7 +128,7 @@ async function main() {
   command('host-dmesg.txt', 'sudo', ['dmesg', '--ctime']);
 
   const results = [];
-  for (const label of ['service-mongo-8', '8.3.13', '8.3.14']) {
+  for (const label of ['service-mongo-8', '8.3.13', '9.0.4']) {
     const result = { label, operations: 0, elapsedMs: 0, logs: '', state: {}, restartCount: null };
     const prefix = label.replaceAll('.', '-');
     let container;
@@ -116,7 +139,8 @@ async function main() {
         container = process.env.MONGO_CONTAINER;
         if (!container) throw new Error('MONGO_CONTAINER is required');
       } else {
-        const image = `mongo:${label}`;
+        const image = label === '9.0.4' ? process.env.FIXED_MONGO_IMAGE : `mongo:${label}`;
+        if (!image) throw new Error('FIXED_MONGO_IMAGE is required for the published fixed control');
         required(`${prefix}-pull.txt`, 'docker', ['pull', image]);
         container = required(`${prefix}-create.txt`, 'docker', [
           'create', '--publish', '127.0.0.1::27017', image,
@@ -134,10 +158,13 @@ async function main() {
         'run', '--rm', '--entrypoint', 'mongod', initial.Image, '--version',
       ]);
       // A shell-only helper collects the container's kernel view even when mongod exits immediately.
-      command(`${prefix}-container-kernel.txt`, 'docker', [
+      const containerKernel = command(`${prefix}-container-kernel.txt`, 'docker', [
         'run', '--rm', '--entrypoint', 'sh', initial.Image, '-c',
         'uname -a; cat /proc/version; cat /proc/version_signature',
       ]);
+      if (containerKernel.status === 0) {
+        result.upstreamVersion = ubuntuUpstreamVersion(containerKernel.stdout);
+      }
       phase = 'runtime';
       if (!initial.State.Running) throw new Error('Container exited before the observation');
       const binding = initial.NetworkSettings.Ports['27017/tcp']?.[0];
@@ -154,6 +181,10 @@ async function main() {
         await client.connect();
         const db = client.db();
         result.buildInfo = await db.admin().command({ buildInfo: 1 });
+        if (label !== 'service-mongo-8' && result.buildInfo.version !== label) {
+          phase = 'infrastructure';
+          throw new Error(`Expected MongoDB ${label}, received ${result.buildInfo.version}`);
+        }
         const parameters = await db.admin().command({ getParameter: '*' });
         save(`${prefix}-server-parameters.json`, JSON.stringify(parameters, null, 2));
         const collection = db.collection('observation');
@@ -219,6 +250,8 @@ async function main() {
     `## MongoDB / ${metadata.label}`,
     '',
     `Image: ${metadata.imageVersion}; kernel: ${kernel}`,
+    `Ubuntu version signature: ${metadata.kernelSignature || 'Not obtained'}; ` +
+      `upstream: ${metadata.upstreamVersion || 'Not obtained'}`,
     '',
     '| Case | Observed build | CRUD cycles | Observed seconds | Exit / running | Verdict |',
     '|---|---|---:|---:|---|---|',
@@ -226,7 +259,7 @@ async function main() {
       `${result.operations} | ${(result.elapsedMs / 1000).toFixed(1)} | ` +
       `${result.state.ExitCode ?? '?'} / ${result.state.Running ?? '?'} | ${result.verdict} |`),
     '',
-    comparison(results),
+    comparison(results, metadata.upstreamVersion),
     '',
     'A fatal 12257600 identifies the startup guard, not an observed rseq crash. ' +
       'Ubuntu ABI suffixes are not upstream patch levels. Check host/container version_signature ' +
@@ -235,6 +268,9 @@ async function main() {
     'The original service uses its published port 27017; pinned containers use dynamically ' +
       'published loopback ports on the same VM. Each pinned container has fresh data. ' +
       'No healthcheck, rseq environment override, or kernel workaround is added.',
+      'The fixed control is MongoDB 9.0.4 pinned to its Linux amd64 manifest digest. ' +
+        'It uses fresh data, not an upgrade of the 8.x database. ' +
+        'The unavailable mongo:8.3.14 tag is intentionally not used.',
     '',
     'Passing this bounded observation does not prove absence of corruption or full compatibility.',
     '',
@@ -252,7 +288,7 @@ async function main() {
   }
 }
 
-module.exports = { hasGuard, classify, comparison };
+module.exports = { hasGuard, ubuntuUpstreamVersion, hasKernelFix, classify, comparison };
 if (require.main === module) {
   main().catch(error => {
     console.error(error.stack);
