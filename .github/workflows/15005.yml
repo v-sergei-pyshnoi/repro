@@ -1,17 +1,19 @@
 name: Repro MongoDB service connection on Ubuntu x64
 
 # https://github.com/actions/runner-images/issues/15005
-# Run manually from Actions; compare image/kernel versions and connection results.
+# Compare pinned MongoDB versions on the same VM without changing rseq settings.
+# Artifacts include raw evidence; the summary distinguishes a version gate from a crash.
 on:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   repro:
     name: mongo:8 / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -33,6 +35,8 @@ jobs:
           - 27017:27017
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Print runner and image information
         shell: bash
         env:
@@ -57,34 +61,15 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/mongo-repro" \
             --no-audit --no-fund --ignore-scripts mongodb@6.21.0
 
-      - name: Connect to MongoDB from the runner
+      - name: Compare MongoDB versions and collect evidence
         shell: bash
-        working-directory: ${{ runner.temp }}/mongo-repro
+        env:
+          NODE_PATH: ${{ runner.temp }}/mongo-repro/node_modules
+          MONGO_CONTAINER: ${{ job.services.mongo.id }}
+          MATRIX_OS: ${{ matrix.os }}
+          DIAGNOSTICS_DIR: ${{ runner.temp }}/mongo-diagnostics
         run: |
-          node <<'NODE'
-          const { MongoClient } = require('mongodb');
-
-          async function main() {
-            const uri = 'mongodb://127.0.0.1:27017/repro15005';
-            const client = new MongoClient(uri, {
-              serverSelectionTimeoutMS: 10000,
-              connectTimeoutMS: 10000,
-            });
-
-            try {
-              console.log(`Connecting to ${uri}`);
-              await client.connect();
-              console.log('MongoDB ping:', await client.db().command({ ping: 1 }));
-            } finally {
-              await client.close();
-            }
-          }
-
-          main().catch(error => {
-            console.error(error);
-            process.exitCode = 1;
-          });
-          NODE
+          node .github/scripts/15005-diagnostics.cjs
 
       - name: Collect service and network diagnostics
         if: always()
@@ -101,3 +86,11 @@ jobs:
           ss -lntp || true
           ip route || true
           sudo iptables -t nat -L -n -v || true
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mongo-15005-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mongo-diagnostics
+          if-no-files-found: error
