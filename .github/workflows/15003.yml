@@ -1,0 +1,70 @@
+name: Diagnose BPF syscall tracepoint event loss (15003)
+
+# https://github.com/actions/runner-images/issues/15003
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    name: BPF / ${{ matrix.os }} / sample ${{ matrix.sample }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - ubuntu-26.04-arm
+        sample: [1, 2, 3, 4, 5]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record image and kernel before installing tools
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+          RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bpf-15003"
+          {
+            printf 'Runner label: %s\nArchitecture: %s\nImageOS: %s\nImageVersion: %s\n' \
+              "$RUNNER_LABEL" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            uname -a
+            cat /etc/os-release
+            lscpu
+            taskset -pc $$
+          } | tee "$RUNNER_TEMP/bpf-15003/runner.txt"
+
+      - name: Install tracing tools without upgrading the kernel
+        shell: bash
+        run: |
+          sudo apt-get update 2>&1 | tee "$RUNNER_TEMP/bpf-15003/apt-update.log"
+          sudo apt-get install -y --no-install-recommends bpftrace \
+            2>&1 | tee "$RUNNER_TEMP/bpf-15003/apt-install.log"
+          bpftrace --version | tee "$RUNNER_TEMP/bpf-15003/bpftrace-version.txt"
+
+      - name: Check syscall-enter events on every allowed CPU
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+        run: |
+          sudo python3 .github/scripts/15003-diagnostics.py \
+            --output "$RUNNER_TEMP/bpf-15003" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --runner-label "$RUNNER_LABEL" \
+            --image-version "${ImageVersion:-unknown}"
+
+      - name: Upload raw evidence even when reproduction fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpf-15003-${{ matrix.os }}-sample-${{ matrix.sample }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bpf-15003
+          if-no-files-found: error
