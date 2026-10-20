@@ -1,0 +1,103 @@
+name: Repro MongoDB service connection on Ubuntu x64
+
+# https://github.com/actions/runner-images/issues/15005
+# Run manually from Actions; compare image/kernel versions and connection results.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  repro:
+    name: mongo:8 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-slim cannot run Docker service containers.
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-26.04
+          - ubuntu-latest
+
+    env:
+      NODE_ENV: test
+
+    services:
+      # Match the issue: no additional health check, retries, or network workaround.
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+
+    steps:
+      - name: Print runner and image information
+        shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          printf 'Runner label: %s\nArchitecture: %s\nImageOS: %s\nImageVersion: %s\n' \
+            "$MATRIX_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          cat /etc/os-release
+          uname -a
+          docker version
+          docker info
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+
+      - name: Install official MongoDB Node driver
+        shell: bash
+        run: |
+          node --version
+          npm install --prefix "$RUNNER_TEMP/mongo-repro" \
+            --no-audit --no-fund --ignore-scripts mongodb@6.21.0
+
+      - name: Connect to MongoDB from the runner
+        shell: bash
+        working-directory: ${{ runner.temp }}/mongo-repro
+        run: |
+          node <<'NODE'
+          const { MongoClient } = require('mongodb');
+
+          async function main() {
+            const uri = 'mongodb://127.0.0.1:27017/repro15005';
+            const client = new MongoClient(uri, {
+              serverSelectionTimeoutMS: 10000,
+              connectTimeoutMS: 10000,
+            });
+
+            try {
+              console.log(`Connecting to ${uri}`);
+              await client.connect();
+              console.log('MongoDB ping:', await client.db().command({ ping: 1 }));
+            } finally {
+              await client.close();
+            }
+          }
+
+          main().catch(error => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+
+      - name: Collect service and network diagnostics
+        if: always()
+        shell: bash
+        env:
+          MONGO_CONTAINER: ${{ job.services.mongo.id }}
+        run: |
+          docker ps -a || true
+          docker inspect "$MONGO_CONTAINER" || true
+          docker port "$MONGO_CONTAINER" || true
+          docker logs --timestamps "$MONGO_CONTAINER" || true
+          docker exec "$MONGO_CONTAINER" mongosh --quiet \
+            --eval 'db.adminCommand({ ping: 1 })' || true
+          ss -lntp || true
+          ip route || true
+          sudo iptables -t nat -L -n -v || true
