@@ -1,0 +1,81 @@
+name: Repro eMudhra certificate trust (15018)
+
+# https://github.com/actions/runner-images/issues/15018
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    name: TLS trust / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - ubuntu-26.04-arm
+          - ubuntu-latest
+          - ubuntu-slim
+          - macos-14
+          - macos-15
+          - macos-15-intel
+          - macos-26
+          - macos-26-intel
+          - macos-latest
+          - xcode-27
+          - windows-2022
+          - windows-2025
+          - windows-2025-vs2026
+          - windows-latest
+          - windows-11-arm
+          - windows-11-vs2026-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe both certificate chains without modifying trust stores
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+          RUNNER_ARCH: ${{ runner.arch }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python .github/scripts/15018-repro.py probe
+          else
+            python3 .github/scripts/15018-repro.py probe
+          fi
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emudhra-15018-${{ matrix.os }}
+          path: ${{ runner.temp }}/emudhra-15018
+          if-no-files-found: error
+
+  report:
+    name: Combined image version and result table
+    if: always()
+    needs: repro
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: emudhra-15018-*
+          path: results
+      - name: Build combined report
+        run: python3 .github/scripts/15018-repro.py report results
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emudhra-15018-report
+          path: results/report.md
+          if-no-files-found: error
