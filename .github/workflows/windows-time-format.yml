@@ -1,0 +1,79 @@
+name: Windows time format
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  time-format:
+    name: Time format (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: X64
+          - runner: windows-11-arm
+            arch: ARM64
+
+    steps:
+      - name: Inspect system time formats
+        shell: pwsh
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          RUNNER_LABEL: ${{ matrix.runner }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_ARCH -ne $env:EXPECTED_ARCH) {
+            throw "Expected $env:EXPECTED_ARCH, got $env:RUNNER_ARCH"
+          }
+
+          $culture = Get-Culture
+          $formats = $culture.DateTimeFormat
+          $registry = Get-ItemProperty 'HKCU:\Control Panel\International'
+          $sample = [datetime]::new(2026, 10, 21, 16, 5, 9)
+          $now = Get-Date
+
+          $report = [ordered]@{
+            Runner = $env:RUNNER_LABEL
+            Architecture = $env:RUNNER_ARCH
+            ImageOS = $env:ImageOS
+            ImageVersion = $env:ImageVersion
+            PowerShell = $PSVersionTable.PSVersion.ToString()
+            Culture = $culture.Name
+            UICulture = (Get-UICulture).Name
+            SystemLocale = (Get-WinSystemLocale).Name
+            TimeZone = (Get-TimeZone).Id
+            ShortTimePattern = $formats.ShortTimePattern
+            LongTimePattern = $formats.LongTimePattern
+            AMDesignator = $formats.AMDesignator
+            PMDesignator = $formats.PMDesignator
+            RegistryShortTime = $registry.sShortTime
+            RegistryTimeFormat = $registry.sTimeFormat
+            Registry24Hour = $registry.iTime
+            RegistryLeadingZero = $registry.iTLZero
+            RegistryAM = $registry.s1159
+            RegistryPM = $registry.s2359
+            SampleISO = $sample.ToString('s')
+            SampleShortTime = $sample.ToString('t', $culture)
+            SampleLongTime = $sample.ToString('T', $culture)
+            GetDateShortTime = (Get-Date -Date $sample -Format t)
+            GetDateLongTime = (Get-Date -Date $sample -Format T)
+            CurrentTimeISO = $now.ToString('o')
+            CurrentShortTime = $now.ToString('t', $culture)
+            CurrentLongTime = $now.ToString('T', $culture)
+          }
+
+          $json = $report | ConvertTo-Json
+          Write-Output $json
+          @(
+            "## Windows time format ($env:RUNNER_ARCH)"
+            ''
+            'Read-only inspection; system settings are not changed. The fixed sample is 16:05:09.'
+            ''
+            '```json'
+            $json
+            '```'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
