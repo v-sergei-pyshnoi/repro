@@ -1,0 +1,128 @@
+name: Repro Firefox PPA download timeout
+
+# Real network reproduction, not fault injection. A successful download is valid.
+# The reported image name says ARM, but the failed package is amd64v3; test both.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  firefox:
+    name: Firefox PPA / Ubuntu 26.04 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    container: ubuntu:26.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUNNER_LABEL: ${{ matrix.os }}
+
+    steps:
+      - name: Prepare Ubuntu 26.04 container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          LOG_DIR="$RUNNER_TEMP/firefox-ppa-repro"
+          echo "LOG_DIR=$LOG_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$LOG_DIR"
+          apt-get -o APT::Update::Error-Mode=any update \
+            2>&1 | tee "$LOG_DIR/bootstrap-update.log"
+          apt-get install --yes --no-install-recommends \
+            ca-certificates curl software-properties-common sudo util-linux \
+            2>&1 | tee "$LOG_DIR/bootstrap-install.log"
+
+      - name: Record runner and package architecture
+        run: |
+          mkdir -p "$LOG_DIR"
+          {
+            printf 'Runner: %s\nImageOS: %s\nImageVersion: %s\n' \
+              "$RUNNER_LABEL" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            uname -a
+            cat /etc/os-release
+            dpkg --print-architecture
+            dpkg --print-foreign-architectures
+            apt-get --version
+            lscpu
+          } 2>&1 | tee "$LOG_DIR/environment.log"
+
+      - name: Add Mozilla Team PPA and refresh package indexes
+        run: |
+          sudo add-apt-repository --no-update --yes ppa:mozillateam/ppa \
+            2>&1 | tee "$LOG_DIR/add-ppa.log"
+          sudo apt-get -o APT::Update::Error-Mode=any update \
+            2>&1 | tee "$LOG_DIR/apt-update.log"
+          apt-cache policy firefox 2>&1 | tee "$LOG_DIR/firefox-policy.log"
+
+      - name: Record selected package URLs and discard cached archives
+        run: |
+          # Hosted images may already have Firefox. Reinstall forces a download.
+          sudo apt-get --print-uris --reinstall --yes \
+            --target-release 'o=LP-PPA-mozillateam' install firefox \
+            2>&1 | tee "$LOG_DIR/package-urls.log"
+          sudo apt-get clean
+
+      - name: Install Firefox from Mozilla Team PPA
+        run: |
+          # Bound the wait and disable retries so the first network error is visible.
+          if sudo apt-get \
+            -o Acquire::Retries=0 \
+            -o Acquire::https::Timeout=60 \
+            --reinstall --yes --target-release 'o=LP-PPA-mozillateam' \
+            install firefox 2>&1 | tee "$LOG_DIR/apt-install.log"; then
+            status=0
+          else
+            status=$?
+          fi
+
+          {
+            echo "## Firefox PPA reproduction: $RUNNER_LABEL"
+            echo
+            echo "- APT exit code: $status"
+            echo "- Ubuntu 26.04 container on a GitHub-hosted Ubuntu 24.04 runner."
+            echo "- Real PPA installation with forced re-download; no injected failure."
+            echo "- HTTPS timeout: 60 seconds; retries: 0."
+            echo "- Selected package URLs and raw logs are in the job artifact."
+            echo "- A successful installation means the timeout did not reproduce."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Collect post-install network diagnostics
+        if: ${{ always() }}
+        run: |
+          mkdir -p "$LOG_DIR"
+          {
+            echo '=== DNS ==='
+            if getent ahosts ppa.launchpadcontent.net; then
+              echo 'DNS lookup succeeded'
+            else
+              printf 'DNS lookup failed, exit code: %s\n' "$?"
+            fi
+
+            echo '=== HTTPS: repository and original failing package ==='
+            # The historical package may have been removed; a 404 is not a timeout.
+            for url in \
+              'https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu/dists/resolute/InRelease' \
+              'https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu/pool/main/f/firefox/firefox_158.0.1%2bbuild1-0ubuntu0.26.04.1%7emt1_amd64v3.deb'; do
+              printf '\nURL: %s\n' "$url"
+              if curl --head --verbose --connect-timeout 15 --max-time 30 \
+                --write-out '\nHTTP=%{http_code} remote_ip=%{remote_ip} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total}\n' \
+                "$url"; then
+                echo 'HTTPS probe completed'
+              else
+                printf 'HTTPS probe failed, curl exit code: %s\n' "$?"
+              fi
+            done
+          } 2>&1 | tee "$LOG_DIR/network.log"
+
+      - name: Upload reproduction logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-ppa-${{ matrix.os }}
+          path: ${{ runner.temp }}/firefox-ppa-repro
+          if-no-files-found: error
