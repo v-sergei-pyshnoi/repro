@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 
 
 ENDPOINTS = {
@@ -31,6 +32,30 @@ def run(command):
         "stdout": result.stdout,
         "stderr": result.stderr,
     }
+
+
+def probe_url(executable, url):
+    attempts = []
+    for attempt in range(4):
+        check = run(
+            [
+                executable,
+                "-sS",
+                "--connect-timeout", "15",
+                "--max-time", "45",
+                "-o", os.devnull,
+                "--write-out", "http_code=%{http_code}\nssl_verify_result=%{ssl_verify_result}\n",
+                url,
+            ]
+        )
+        check["result"] = classify(check["exit_code"], check["stderr"])
+        attempts.append(check)
+        if check["result"] != "INCONCLUSIVE":
+            break
+        print(f"Attempt {attempt + 1}: {url}: {check['stderr']}", flush=True)
+        if attempt < 3:
+            time.sleep(2)
+    return {**attempts[-1], "attempts": attempts}
 
 
 def table(results):
@@ -69,7 +94,7 @@ def probe():
     result = {
         "label": os.environ["RUNNER_LABEL"],
         "image_os": os.environ.get("ImageOS", "not provided"),
-        "image_version": os.environ.get("ImageVersion", "not provided"),
+        "image_version": os.environ.get("ImageVersion") or "not provided (see job setup)",
         "architecture": os.environ["RUNNER_ARCH"],
         "platform": platform.platform(),
         "binaries": [],
@@ -84,19 +109,7 @@ def probe():
             raise RuntimeError(f"Cannot query {executable}: {version}")
         binary = {"name": name, "path": executable, "version": version, "probes": {}}
         for chain, url in ENDPOINTS.items():
-            check = run(
-                [
-                    executable,
-                    "-sS",
-                    "--connect-timeout", "15",
-                    "--max-time", "45",
-                    "-o", os.devnull,
-                    "--write-out", "http_code=%{http_code}\nssl_verify_result=%{ssl_verify_result}\n",
-                    url,
-                ]
-            )
-            check["result"] = classify(check["exit_code"], check["stderr"])
-            binary["probes"][chain] = check
+            binary["probes"][chain] = probe_url(executable, url)
         result["binaries"].append(binary)
     evidence = json.dumps(result, indent=2)
     (output / "result.json").write_text(evidence + "\n", encoding="utf-8")
@@ -122,6 +135,9 @@ def report(directory):
         "No trust-store updates, insecure flags, revocation bypasses, or credentials are used. "
         "G3 and AAA are the two public demonstration endpoints from the issue. "
         "Image versions are read from the actual runner, not the repository documentation.\n\n"
+        "Only inconclusive errors are retried (up to four attempts, two seconds apart); "
+        "all attempts are retained. A definitive acceptance or rejection is not retried. "
+        "If ImageVersion is empty (ubuntu-slim), consult the VM Image section of job setup.\n\n"
         + table(results)
         + "\nRaw artifacts contain curl versions, executable paths, commands, exit codes, "
         "stderr, platform/architecture, and the Ubuntu ca-certificates package version.\n"
