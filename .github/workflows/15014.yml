@@ -1,0 +1,55 @@
+name: Repro private Git fetch authentication (15014)
+
+# https://github.com/actions/runner-images/issues/15014
+# Setup and interpretation: ../scripts/15014-repro.md
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    name: Git auth / ${{ matrix.os }} / sample ${{ matrix.sample }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - ubuntu-26.04-arm
+          - ubuntu-latest
+          - ubuntu-slim
+        sample: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Record runner image and linked curl library
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+          RUNNER_ARCH: ${{ runner.arch }}
+          SAMPLE: ${{ matrix.sample }}
+        run: |
+          printf 'Runner label: %s\nArchitecture: %s\nSample: %s\n' \
+            "$RUNNER_LABEL" "$RUNNER_ARCH" "$SAMPLE"
+          printf 'ImageOS: %s\nImageVersion: %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          uname -a
+          git --version
+          curl --version
+          dpkg-query -W -f='${binary:Package}\t${Version}\n' \
+            | awk '$1 ~ /^(git|curl)(:|$)/ || $1 ~ /^libcurl/ { print }'
+          ldd "$(git --exec-path)/git-remote-https"
+
+      - name: Compare original URL rewrite and nonempty-password workaround
+        env:
+          PRIVATE_REPOSITORY: ${{ secrets.REPRO_REPO }}
+          PAT: ${{ secrets.PAT }}
+        run: python3 .github/scripts/15014-diagnostics.py
