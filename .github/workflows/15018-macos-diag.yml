@@ -1,0 +1,127 @@
+name: Diagnose macOS eMudhra trust (15018)
+
+# https://github.com/actions/runner-images/issues/15018
+# Read-only: no trust stores are modified, no certificate checks are disabled.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: macOS trust diagnostics / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-14
+          - macos-15
+          - macos-15-intel
+          - macos-26
+          - macos-26-intel
+          - xcode-27
+    steps:
+      - name: Collect trust evidence
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+        run: |
+          set +e
+          OUT="$RUNNER_TEMP/diag"; mkdir -p "$OUT"
+          G3=dv-g3b-emudhra.we-have-a-problem.com
+          AAA=dv-g3b-aaa-emudhra.we-have-a-problem.com
+          PREFIX=$(brew --prefix)
+          BREW_CURL="$PREFIX/opt/curl/bin/curl"
+
+          cat > "$OUT/certs.py" <<'PY'
+          import re, subprocess, sys
+          data = sys.stdin.read()
+          pat = re.compile(sys.argv[1], re.I) if len(sys.argv) > 1 else None
+          certs = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", data, re.S)
+          print(f"certificates in input: {len(certs)}")
+          for i, pem in enumerate(certs):
+              out = subprocess.run(
+                  ["openssl", "x509", "-noout", "-subject", "-issuer", "-serial", "-fingerprint", "-sha1"],
+                  input=pem, capture_output=True, text=True,
+              ).stdout.strip()
+              if pat is None or pat.search(out):
+                  print(f"[{i}]\n{out}")
+          PY
+
+          probe() { # binary url [extra curl args]
+            local bin=$1 url=$2 out rc; shift 2
+            for i in 1 2 3 4; do
+              out=$("$bin" -sS --connect-timeout 15 --max-time 45 -o /dev/null "$@" "$url" 2>&1); rc=$?
+              [[ $rc != 28 && $rc != 6 && $rc != 7 ]] && break
+              sleep 2
+            done
+            echo "exit=$rc attempts=$i ${out%%$'\n'*}"
+          }
+
+          {
+            echo "## $RUNNER_LABEL (image ${ImageVersion:-unknown}, $(uname -m), macOS $(sw_vers -productVersion))"
+            echo
+            echo "### curl binaries"
+            for c in /usr/bin/curl "$(command -v curl)" "$BREW_CURL"; do
+              [ -x "$c" ] && echo "$c -> $("$c" --version | head -1)"
+            done
+            echo "PATH curl: $(command -v curl)"
+            echo "homebrew ca-certificates: $(brew list --versions ca-certificates 2>&1)"
+            echo
+            echo "### CA file used by Homebrew curl (verbose handshake)"
+            [ -x "$BREW_CURL" ] && "$BREW_CURL" -sv -o /dev/null --max-time 45 "https://$G3/" 2>&1 \
+              | grep -iE 'CAfile|CApath|issuer:|SSL certificate verify'
+            echo "curl-config --ca: $("$PREFIX/opt/curl/bin/curl-config" --ca 2>&1)"
+            echo
+            echo "### CA bundle files (file, mtime, eMudhra / AAA roots inside)"
+            for f in /etc/ssl/cert.pem "$PREFIX/etc/ca-certificates/cert.pem" "$PREFIX/etc/openssl@3/cert.pem"; do
+              [ -e "$f" ] || { echo "-- $f: missing"; continue; }
+              echo "-- $f -> $(readlink "$f" || echo regular) ($(stat -f '%Sm' "$f"))"
+              python3 "$OUT/certs.py" 'subject=.*(emSign|eMudhra|AAA Certificate)' < "$f"
+            done
+            echo
+            echo "### macOS system roots keychain"
+            for name in "emSign ECC Root CA - G3" "emSign Root CA - G1" "emSign Root CA - C1" "emSign ECC Root CA - C3" "AAA Certificate Services"; do
+              hit=$(security find-certificate -a -Z -c "$name" /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 | grep -E 'SHA-1 hash')
+              echo "$name: ${hit:-NOT PRESENT}"
+            done
+            echo "admin/user trust overrides:"
+            security dump-trust-settings -d 2>&1 | head -5
+            echo
+            echo "### Chains served by the test hosts"
+            for h in "$G3" "$AAA"; do
+              echo "-- $h"
+              openssl s_client -connect "$h:443" -servername "$h" -showcerts </dev/null 2>/dev/null \
+                | python3 "$OUT/certs.py"
+            done
+            echo
+            echo "### Fresh Mozilla bundle (curl.se)"
+            curl -fsSL --max-time 60 -o "$OUT/cacert.pem" https://curl.se/ca/cacert.pem && {
+              grep -m1 'Certificate data from Mozilla' "$OUT/cacert.pem"
+              python3 "$OUT/certs.py" 'subject=.*(emSign|eMudhra|AAA Certificate)' < "$OUT/cacert.pem"
+            }
+            echo
+            echo "### Probes (default trust unless stated)"
+            for c in /usr/bin/curl "$BREW_CURL"; do
+              [ -x "$c" ] || continue
+              echo "-- $c"
+              echo "G3 default:        $(probe "$c" "https://$G3/")"
+              echo "AAA default:       $(probe "$c" "https://$AAA/")"
+              if [ -s "$OUT/cacert.pem" ]; then
+                echo "G3 fresh Mozilla:  $(probe "$c" "https://$G3/" --cacert "$OUT/cacert.pem")"
+                echo "AAA fresh Mozilla: $(probe "$c" "https://$AAA/" --cacert "$OUT/cacert.pem")"
+              fi
+            done
+          } 2>&1 | tee "$OUT/report.txt"
+
+          { echo '```text'; cat "$OUT/report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emudhra-15018-macos-diag-${{ matrix.os }}
+          path: ${{ runner.temp }}/diag/report.txt
+          if-no-files-found: error
