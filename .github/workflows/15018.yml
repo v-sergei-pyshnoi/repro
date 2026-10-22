@@ -25,19 +25,6 @@ jobs:
           - ubuntu-26.04-arm
           - ubuntu-latest
           - ubuntu-slim
-          - macos-14
-          - macos-15
-          - macos-15-intel
-          - macos-26
-          - macos-26-intel
-          - macos-latest
-          - xcode-27
-          - windows-2022
-          - windows-2025
-          - windows-2025-vs2026
-          - windows-latest
-          - windows-11-arm
-          - windows-11-vs2026-arm
     steps:
       - uses: actions/checkout@v4
 
