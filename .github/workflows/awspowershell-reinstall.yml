@@ -1,4 +1,4 @@
-name: AWSPowerShell reinstall diagnostics
+name: AWSPowerShell and NetCore reinstall diagnostics
 
 on:
   workflow_dispatch:
@@ -13,18 +13,32 @@ permissions:
 
 jobs:
   reinstall:
+    name: Reinstall ${{ matrix.module }} (${{ matrix.shell }})
     runs-on: windows-latest
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - module: AWSPowerShell
+            shell: powershell
+          - module: AWSPowerShell.NetCore
+            shell: pwsh
     steps:
-      - name: Remove and reinstall AWSPowerShell with diagnostics
+      - name: Remove and reinstall ${{ matrix.module }} with diagnostics
         timeout-minutes: 50
-        shell: powershell
         env:
           MEASURE_DOWNLOAD: ${{ inputs.measure_download }}
+          MODULE_NAME: ${{ matrix.module }}
         run: |
           $ErrorActionPreference = 'Stop'
           $VerbosePreference = 'Continue'
           $DebugPreference = 'Continue'
+          $moduleName = $env:MODULE_NAME
           $logDir = Join-Path $env:RUNNER_TEMP 'awspowershell-diagnostics'
           New-Item -ItemType Directory -Path $logDir -Force | Out-Null
           $timings = Join-Path $logDir 'timings.csv'
@@ -54,9 +68,10 @@ jobs:
           try {
             Measure-Phase 'Runner and PowerShell inventory' {
               Write-Host "Image: $env:ImageOS / $env:ImageVersion"
+              Write-Host "Target module: $moduleName"
               $PSVersionTable | Format-Table -AutoSize
               Write-Host "PSModulePath: $env:PSModulePath"
-              Get-Module -ListAvailable -Name AWSPowerShell, PowerShellGet, PackageManagement |
+              Get-Module -ListAvailable -Name $moduleName, PowerShellGet, PackageManagement |
                 Select-Object Name, Version, ModuleBase | Format-Table -AutoSize
               Get-PSDrive -PSProvider FileSystem |
                 Select-Object Name, Used, Free | Format-Table -AutoSize
@@ -78,15 +93,16 @@ jobs:
               }
             }
 
-            Measure-Phase 'Remove all existing AWSPowerShell copies' {
-              Get-Module -Name AWSPowerShell | Remove-Module -Force -ErrorAction Stop
+            Measure-Phase "Remove all existing $moduleName copies" {
+              Get-Module -Name $moduleName | Remove-Module -Force -ErrorAction Stop
               $roots = @($env:PSModulePath -split ';')
               $roots += Join-Path $env:ProgramFiles 'PowerShell\Modules'
               $roots += Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'
               $roots += Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Modules'
+              $roots += Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'
               $removed = 0
               foreach ($root in ($roots | Where-Object { $_ } | Sort-Object -Unique)) {
-                $moduleDir = Join-Path $root 'AWSPowerShell'
+                $moduleDir = Join-Path $root $moduleName
                 if (Test-Path -LiteralPath $moduleDir) {
                   Write-Host "Removing exactly: $moduleDir"
                   # Image-bundled modules may have no PowerShellGet uninstall metadata.
@@ -95,10 +111,10 @@ jobs:
                 }
               }
               Write-Host "Removed module directories: $removed"
-              $remaining = @(Get-Module -ListAvailable -Name AWSPowerShell)
+              $remaining = @(Get-Module -ListAvailable -Name $moduleName)
               if ($remaining.Count -gt 0) {
                 $remaining | Format-List Name, Version, ModuleBase
-                throw 'AWSPowerShell is still discoverable after removal.'
+                throw "$moduleName is still discoverable after removal."
               }
             }
 
@@ -113,20 +129,20 @@ jobs:
               }
             }
 
-            Measure-Phase 'Find latest AWSPowerShell in PSGallery' {
-              $script:package = Find-Module -Name AWSPowerShell -Repository PSGallery -Verbose -Debug
+            Measure-Phase "Find latest $moduleName in PSGallery" {
+              $script:package = Find-Module -Name $moduleName -Repository PSGallery -Verbose -Debug
               $script:package | Select-Object Name, Version, Repository, PublishedDate |
                 Format-List
             }
 
             if ($env:MEASURE_DOWNLOAD -eq 'true') {
               Measure-Phase 'Optional standalone package download (not used by Install-Module)' {
-                $archive = Join-Path $logDir 'AWSPowerShell.nupkg'
+                $archive = Join-Path $logDir "$moduleName.nupkg"
                 try {
                   & curl.exe --location --fail --show-error --silent `
                     --connect-timeout 30 --max-time 900 --output $archive `
                     --write-out "http=%{http_code} remote_ip=%{remote_ip} dns=%{time_namelookup}s tcp=%{time_connect}s tls=%{time_appconnect}s first_byte=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download} bytes_per_second=%{speed_download}`n" `
-                    "https://www.powershellgallery.com/api/v2/package/AWSPowerShell/$($script:package.Version)"
+                    "https://www.powershellgallery.com/api/v2/package/$moduleName/$($script:package.Version)"
                   if ($LASTEXITCODE -ne 0) {
                     throw "Package download failed: curl exit code $LASTEXITCODE"
                   }
@@ -138,20 +154,20 @@ jobs:
               }
             }
 
-            Measure-Phase 'Install-Module AWSPowerShell' {
-              Install-Module -Name AWSPowerShell -RequiredVersion $script:package.Version `
+            Measure-Phase "Install-Module $moduleName" {
+              Install-Module -Name $moduleName -RequiredVersion $script:package.Version `
                 -Repository PSGallery -Scope AllUsers -Force -AllowClobber `
                 -Verbose -Debug -Confirm:$false -ErrorAction Stop
             }
 
             Measure-Phase 'Import and verify installed version' {
-              Import-Module AWSPowerShell -RequiredVersion $script:package.Version -Force -Verbose
-              $loaded = Get-Module -Name AWSPowerShell
+              Import-Module $moduleName -RequiredVersion $script:package.Version -Force -Verbose
+              $loaded = Get-Module -Name $moduleName
               if (-not $loaded -or $loaded.Version.ToString() -ne $script:package.Version.ToString()) {
-                throw "Loaded AWSPowerShell does not match expected version $($script:package.Version)."
+                throw "Loaded $moduleName does not match expected version $($script:package.Version)."
               }
               $loaded | Select-Object Name, Version, ModuleBase | Format-List
-              Get-Command -Name Get-AWSPowerShellVersion -Module AWSPowerShell -ErrorAction Stop |
+              Get-Command -Name Get-AWSPowerShellVersion -Module $moduleName -ErrorAction Stop |
                 Format-List Name, Source, Version
               Get-AWSPowerShellVersion
             }
@@ -160,7 +176,7 @@ jobs:
               $rows = Import-Csv -Path $timings
               $rows | Format-Table -AutoSize
               @(
-                '## AWSPowerShell reinstall timings'
+                "## $moduleName reinstall timings"
                 ''
                 "Image: $env:ImageOS / $env:ImageVersion"
                 ''
@@ -181,6 +197,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: awspowershell-diagnostics
+          name: ${{ matrix.module }}-diagnostics
           path: ${{ runner.temp }}/awspowershell-diagnostics/
           if-no-files-found: warn
