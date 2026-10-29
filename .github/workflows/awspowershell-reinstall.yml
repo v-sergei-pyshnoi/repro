@@ -1,0 +1,186 @@
+name: AWSPowerShell reinstall diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      measure_download:
+        description: Download the package separately before installation to measure transfer speed (may warm caches)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  reinstall:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Remove and reinstall AWSPowerShell with diagnostics
+        timeout-minutes: 50
+        shell: powershell
+        env:
+          MEASURE_DOWNLOAD: ${{ inputs.measure_download }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $VerbosePreference = 'Continue'
+          $DebugPreference = 'Continue'
+          $logDir = Join-Path $env:RUNNER_TEMP 'awspowershell-diagnostics'
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+          $timings = Join-Path $logDir 'timings.csv'
+          Start-Transcript -Path (Join-Path $logDir 'transcript.txt')
+
+          function Measure-Phase {
+            param([string]$Name, [scriptblock]$Action)
+            Write-Host "::group::$Name"
+            Write-Host "Started: $([DateTime]::UtcNow.ToString('o'))"
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            $status = 'Failed'
+            try {
+              & $Action
+              $status = 'OK'
+            } finally {
+              $timer.Stop()
+              [pscustomobject]@{
+                Phase = $Name
+                Seconds = [math]::Round($timer.Elapsed.TotalSeconds, 3)
+                Status = $status
+              } | Export-Csv -Path $timings -NoTypeInformation -Append
+              Write-Host "Finished: $([DateTime]::UtcNow.ToString('o')); elapsed=$($timer.Elapsed); status=$status"
+              Write-Host '::endgroup::'
+            }
+          }
+
+          try {
+            Measure-Phase 'Runner and PowerShell inventory' {
+              Write-Host "Image: $env:ImageOS / $env:ImageVersion"
+              $PSVersionTable | Format-Table -AutoSize
+              Write-Host "PSModulePath: $env:PSModulePath"
+              Get-Module -ListAvailable -Name AWSPowerShell, PowerShellGet, PackageManagement |
+                Select-Object Name, Version, ModuleBase | Format-Table -AutoSize
+              Get-PSDrive -PSProvider FileSystem |
+                Select-Object Name, Used, Free | Format-Table -AutoSize
+              Get-PSRepository | Format-List Name, SourceLocation, InstallationPolicy
+              Get-PackageProvider -ListAvailable |
+                Select-Object Name, Version | Format-Table -AutoSize
+              Get-Command Install-Module | Format-List Name, Source, Version
+            }
+
+            Measure-Phase 'PSGallery DNS and HTTPS probe' {
+              Resolve-DnsName www.powershellgallery.com | Format-Table -AutoSize
+              # Keep this a HEAD request; the optional full download is measured separately.
+              & curl.exe --head --location --fail --show-error --silent `
+                --connect-timeout 30 --max-time 120 `
+                --write-out "`nhttp=%{http_code} remote_ip=%{remote_ip} dns=%{time_namelookup}s tcp=%{time_connect}s tls=%{time_appconnect}s first_byte=%{time_starttransfer}s total=%{time_total}s`n" `
+                'https://www.powershellgallery.com/api/v2/'
+              if ($LASTEXITCODE -ne 0) {
+                throw "PSGallery HTTPS probe failed: curl exit code $LASTEXITCODE"
+              }
+            }
+
+            Measure-Phase 'Remove all existing AWSPowerShell copies' {
+              Get-Module -Name AWSPowerShell | Remove-Module -Force -ErrorAction Stop
+              $roots = @($env:PSModulePath -split ';')
+              $roots += Join-Path $env:ProgramFiles 'PowerShell\Modules'
+              $roots += Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'
+              $roots += Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Modules'
+              $removed = 0
+              foreach ($root in ($roots | Where-Object { $_ } | Sort-Object -Unique)) {
+                $moduleDir = Join-Path $root 'AWSPowerShell'
+                if (Test-Path -LiteralPath $moduleDir) {
+                  Write-Host "Removing exactly: $moduleDir"
+                  # Image-bundled modules may have no PowerShellGet uninstall metadata.
+                  Remove-Item -LiteralPath $moduleDir -Recurse -Force
+                  $removed++
+                }
+              }
+              Write-Host "Removed module directories: $removed"
+              $remaining = @(Get-Module -ListAvailable -Name AWSPowerShell)
+              if ($remaining.Count -gt 0) {
+                $remaining | Format-List Name, Version, ModuleBase
+                throw 'AWSPowerShell is still discoverable after removal.'
+              }
+            }
+
+            Measure-Phase 'Prepare NuGet provider' {
+              $nuget = @(Get-PackageProvider -ListAvailable |
+                Where-Object { $_.Name -eq 'NuGet' -and $_.Version -ge [version]'2.8.5.201' })
+              if ($nuget.Count -eq 0) {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 `
+                  -Scope AllUsers -Force -Verbose -Debug -Confirm:$false
+              } else {
+                $nuget | Format-Table Name, Version -AutoSize
+              }
+            }
+
+            Measure-Phase 'Find latest AWSPowerShell in PSGallery' {
+              $script:package = Find-Module -Name AWSPowerShell -Repository PSGallery -Verbose -Debug
+              $script:package | Select-Object Name, Version, Repository, PublishedDate |
+                Format-List
+            }
+
+            if ($env:MEASURE_DOWNLOAD -eq 'true') {
+              Measure-Phase 'Optional standalone package download (not used by Install-Module)' {
+                $archive = Join-Path $logDir 'AWSPowerShell.nupkg'
+                try {
+                  & curl.exe --location --fail --show-error --silent `
+                    --connect-timeout 30 --max-time 900 --output $archive `
+                    --write-out "http=%{http_code} remote_ip=%{remote_ip} dns=%{time_namelookup}s tcp=%{time_connect}s tls=%{time_appconnect}s first_byte=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download} bytes_per_second=%{speed_download}`n" `
+                    "https://www.powershellgallery.com/api/v2/package/AWSPowerShell/$($script:package.Version)"
+                  if ($LASTEXITCODE -ne 0) {
+                    throw "Package download failed: curl exit code $LASTEXITCODE"
+                  }
+                } finally {
+                  if (Test-Path -LiteralPath $archive) {
+                    Remove-Item -LiteralPath $archive -Force
+                  }
+                }
+              }
+            }
+
+            Measure-Phase 'Install-Module AWSPowerShell' {
+              Install-Module -Name AWSPowerShell -RequiredVersion $script:package.Version `
+                -Repository PSGallery -Scope AllUsers -Force -AllowClobber `
+                -Verbose -Debug -Confirm:$false -ErrorAction Stop
+            }
+
+            Measure-Phase 'Import and verify installed version' {
+              Import-Module AWSPowerShell -RequiredVersion $script:package.Version -Force -Verbose
+              $loaded = Get-Module -Name AWSPowerShell
+              if (-not $loaded -or $loaded.Version.ToString() -ne $script:package.Version.ToString()) {
+                throw "Loaded AWSPowerShell does not match expected version $($script:package.Version)."
+              }
+              $loaded | Select-Object Name, Version, ModuleBase | Format-List
+              Get-Command -Name Get-AWSPowerShellVersion -Module AWSPowerShell -ErrorAction Stop |
+                Format-List Name, Source, Version
+              Get-AWSPowerShellVersion
+            }
+          } finally {
+            if (Test-Path -LiteralPath $timings) {
+              $rows = Import-Csv -Path $timings
+              $rows | Format-Table -AutoSize
+              @(
+                '## AWSPowerShell reinstall timings'
+                ''
+                "Image: $env:ImageOS / $env:ImageVersion"
+                ''
+                '| Phase | Seconds | Status |'
+                '| --- | ---: | --- |'
+                $rows | ForEach-Object { "| $($_.Phase) | $($_.Seconds) | $($_.Status) |" }
+                ''
+                'See transcript.txt for PowerShellGet/NuGet verbose and debug output.'
+                'Compare DNS/TLS/first-byte timings, NuGet bootstrap, gallery lookup, installation and import.'
+                'The optional download probes transfer speed but may warm remote/local caches before Install-Module.'
+                'A slow Install-Module phase alone does not prove a network issue: it also includes extraction and filesystem work.'
+              ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            }
+            Stop-Transcript
+          }
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: awspowershell-diagnostics
+          path: ${{ runner.temp }}/awspowershell-diagnostics/
+          if-no-files-found: warn
