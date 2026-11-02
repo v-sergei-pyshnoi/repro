@@ -1,0 +1,190 @@
+name: Windows image identity repro (15201)
+
+# https://github.com/actions/runner-images/issues/15201
+# Run manually; compare the report with "Set up job > Runner Image".
+# No source is assumed authoritative. Only whitelisted identity fields are uploaded.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-identity:
+    name: Image identity / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-2022
+          - windows-2025
+          - windows-2025-vs2026
+          - windows-latest
+          - windows-11-arm
+          - windows-11-vs2026-arm
+    steps:
+      - name: Collect and compare image identity
+        shell: pwsh
+        env:
+          RUNNER_LABEL: ${{ matrix.os }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $outputDir = Join-Path $env:RUNNER_TEMP 'image-identity'
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          $issues = [Collections.Generic.List[string]]::new()
+
+          function Read-ImageMetadata {
+            param([string]$Path)
+            $file = Get-Item -LiteralPath $Path
+            if ($file.Length -gt 1MB) {
+              throw "Metadata file exceeds the 1 MiB read limit: $Path"
+            }
+            $bytes = [IO.File]::ReadAllBytes($file.FullName)
+            $text = [Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF)
+            $groups = @($text | ConvertFrom-Json)
+            $image = @($groups | Where-Object { $_.group -eq 'Runner Image' })
+            if ($image.Count -ne 1) {
+              throw "Expected exactly one Runner Image group in $Path"
+            }
+            $fields = [ordered]@{}
+            foreach ($key in @('Image', 'Version', 'Included Software', 'Image Release')) {
+              $pattern = '(?m)^' + [regex]::Escape($key) + ':[ \t]*(.+?)\r?$'
+              $matches = [regex]::Matches([string]$image[0].detail, $pattern)
+              if ($matches.Count -ne 1 -or [string]::IsNullOrWhiteSpace($matches[0].Groups[1].Value)) {
+                throw "Expected exactly one nonempty '$key' field in $Path"
+              }
+              $fields[$key] = $matches[0].Groups[1].Value.Trim()
+            }
+            [ordered]@{
+              path = $file.FullName
+              lastWriteTimeUtc = $file.LastWriteTimeUtc.ToString('o')
+              bytes = $bytes.Length
+              sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+              identity = $fields
+            }
+          }
+
+          function Get-IdentityIssues {
+            param($EnvironmentScopes, $Files)
+            $versions = [ordered]@{}
+            foreach ($scope in @('Process', 'Machine', 'User')) {
+              $value = $EnvironmentScopes[$scope].ImageVersion
+              if ([string]::IsNullOrWhiteSpace($value)) {
+                if ($scope -ne 'User') {
+                  "environment.$scope.ImageVersion missing"
+                }
+              } else {
+                $versions["environment.$scope"] = $value
+              }
+            }
+            foreach ($name in $Files.Keys) {
+              if ($null -ne $Files[$name]) {
+                $versions["files.$name"] = $Files[$name].identity['Version']
+              }
+            }
+            if (@($versions.Values | Sort-Object -Unique).Count -gt 1) {
+              'ImageVersion mismatch: ' + (($versions.GetEnumerator() | ForEach-Object {
+                "$($_.Key)=$($_.Value)"
+              }) -join '; ')
+            }
+            if ($null -ne $Files.setupInfo -and $null -ne $Files.imageData) {
+              foreach ($key in @('Image', 'Included Software', 'Image Release')) {
+                if ($Files.setupInfo.identity[$key] -cne $Files.imageData.identity[$key]) {
+                  "File identity mismatch: $key"
+                }
+              }
+            }
+          }
+
+          $scopes = [ordered]@{}
+          foreach ($scope in @('Process', 'Machine', 'User')) {
+            $scopes[$scope] = [ordered]@{
+              ImageOS = [Environment]::GetEnvironmentVariable('ImageOS', $scope)
+              ImageVersion = [Environment]::GetEnvironmentVariable('ImageVersion', $scope)
+            }
+          }
+
+          $files = [ordered]@{ setupInfo = $null; imageData = $null }
+          try {
+            # Use this job's Worker ancestor, not a glob that may select an old runner cache.
+            $processId = $PID
+            $workerPath = $null
+            $visited = [Collections.Generic.HashSet[int]]::new()
+            while ($processId -gt 0 -and $visited.Add([int]$processId)) {
+              $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId"
+              if ($null -eq $process) { break }
+              if ($process.Name -ieq 'Runner.Worker.exe') {
+                $workerPath = $process.ExecutablePath
+                break
+              }
+              $processId = $process.ParentProcessId
+            }
+            if ([string]::IsNullOrWhiteSpace($workerPath)) {
+              throw 'Could not locate the current Runner.Worker.exe ancestor.'
+            }
+            $runnerRoot = Split-Path (Split-Path $workerPath -Parent) -Parent
+            $files.setupInfo = Read-ImageMetadata (Join-Path $runnerRoot '.setup_info')
+          } catch {
+            $message = "files.setupInfo: $($_.Exception.Message)"
+            $issues.Add($message)
+            Write-Host "::error::$message"
+          }
+          try {
+            $files.imageData = Read-ImageMetadata (Join-Path $env:SystemDrive 'imagedata.json')
+          } catch {
+            $message = "files.imageData: $($_.Exception.Message)"
+            $issues.Add($message)
+            Write-Host "::error::$message"
+          }
+          foreach ($problem in @(Get-IdentityIssues $scopes $files)) {
+            $issues.Add($problem)
+            Write-Host "::error::$problem"
+          }
+
+          $report = [ordered]@{
+            issue = 'https://github.com/actions/runner-images/issues/15201'
+            sampledAtUtc = [DateTime]::UtcNow.ToString('o')
+            runnerLabel = $env:RUNNER_LABEL
+            runnerArch = $env:RUNNER_ARCH
+            runnerOS = $env:RUNNER_OS
+            osVersion = [Environment]::OSVersion.VersionString
+            powerShell = $PSVersionTable.PSVersion.ToString()
+            runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            startupLogCompared = $false
+            environment = $scopes
+            files = $files
+            consistent = $issues.Count -eq 0
+            issues = @($issues.ToArray())
+          }
+          $json = $report | ConvertTo-Json -Depth 10
+          $json | Set-Content -LiteralPath (Join-Path $outputDir 'image-identity.json') -Encoding utf8
+          Write-Host $json
+          @(
+            "## Image identity: $env:RUNNER_LABEL"
+            ''
+            "Consistent: $($report.consistent)"
+            ''
+            'Read-only repro for actions/runner-images#15201. No image revision is assumed authoritative.'
+            'Startup logs are not read automatically; compare the file identity fields below with Set up job > Runner Image.'
+            'An unset User scope is normal. Missing/unreadable metadata is a collection failure, not proof of a version mismatch.'
+            ''
+            '```json'
+            $json
+            '```'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          if ($issues.Count -gt 0) {
+            throw 'Image identity check failed; inspect image-identity.json and the startup log.'
+          }
+
+      - name: Upload image identity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-identity-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/image-identity/image-identity.json
+          if-no-files-found: error
+          retention-days: 14
