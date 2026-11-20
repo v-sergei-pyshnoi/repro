@@ -1,4 +1,4 @@
-name: APT mirrors on 256 Ubuntu x64 runners
+name: APT mirrors on 256 Ubuntu 26.04 x64 runners
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions: {}
 jobs:
   collect:
     name: Group ${{ matrix.group }} / sample ${{ matrix.sample }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -28,6 +28,7 @@ jobs:
           import os
           import pathlib
           import subprocess
+          import urllib.parse
 
           architecture = subprocess.check_output(
               ["dpkg", "--print-architecture"], text=True
@@ -47,13 +48,44 @@ jobs:
               ["apt-get", "--print-uris", "update"], text=True
           )
           mirrors = set()
+          mirror_lists = {}
+
+          def add_mirror(uri):
+              if uri.startswith("mirror+file:"):
+                  location = urllib.parse.urlsplit(uri.removeprefix("mirror+"))
+                  if location.netloc not in ("", "localhost"):
+                      raise RuntimeError(f"Non-local mirror file: {uri}")
+                  path = pathlib.Path(urllib.parse.unquote(location.path))
+                  if not path.is_absolute() or location.query or location.fragment:
+                      raise RuntimeError(f"Invalid mirror file URI: {uri}")
+                  if str(path) in mirror_lists:
+                      return
+                  content = path.read_text()
+                  mirror_lists[str(path)] = content
+                  entries = [
+                      line.split()[0]
+                      for line in content.splitlines()
+                      if line.strip() and not line.lstrip().startswith("#")
+                  ]
+                  if not entries:
+                      raise RuntimeError(f"Empty mirror list: {path}")
+                  for entry in entries:
+                      if entry.startswith(("mirror:", "mirror+")):
+                          raise RuntimeError(f"Nested mirror list is unsupported: {entry}")
+                      add_mirror(entry)
+                  return
+              location = urllib.parse.urlsplit(uri)
+              if location.scheme not in ("http", "https", "ftp") or not location.netloc:
+                  raise RuntimeError(f"Unsupported mirror URI: {uri}")
+              mirrors.add(uri.rstrip("/"))
+
           for line in output.splitlines():
               if not line.startswith("'"):
                   continue
               uri = line.split("'", 2)[1]
               if "/dists/" not in uri:
                   raise RuntimeError(f"Unexpected APT index URI: {uri}")
-              mirrors.add(uri.split("/dists/", 1)[0].rstrip("/"))
+              add_mirror(uri.split("/dists/", 1)[0])
           if not mirrors:
               raise RuntimeError("APT returned no enabled mirrors")
 
@@ -63,6 +95,7 @@ jobs:
               "image_version": os.environ.get("ImageVersion", "unknown"),
               "mirrors": sorted(mirrors),
               "sources": sources,
+              "mirror_lists": mirror_lists,
               "apt_print_uris": output,
           }
           pathlib.Path(f"results/sample-{report['sample']}.json").write_text(
@@ -81,7 +114,7 @@ jobs:
     name: Combined statistics
     needs: collect
     if: ${{ always() }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - uses: actions/download-artifact@v4
@@ -142,11 +175,13 @@ jobs:
           summary = [
               "# APT mirror statistics",
               "",
-              f"Collected: **{len(reports)} / 256** Ubuntu 24.04 x64 samples.",
+              f"Collected: **{len(reports)} / 256** Ubuntu 26.04 x64 samples.",
               "",
               "Each configured mirror is counted once per runner; percentages use collected samples.",
               "No downloads or updates were performed. Mirror redirects were not resolved.",
-              "Raw source files and APT index URIs are included in the artifact.",
+              "Local mirror+file lists are expanded to actual configured mirror URLs.",
+              "All listed candidates are counted, not the mirror chosen for a download.",
+              "Raw source files, mirror lists and APT index URIs are included in the artifact.",
               "",
               "## Image versions encountered",
               "",
