@@ -1,0 +1,249 @@
+name: APT mirrors on 100 Ubuntu x64 runners
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  collect:
+    name: Sample ${{ matrix.sample }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        sample:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+          - 11
+          - 12
+          - 13
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+          - 19
+          - 20
+          - 21
+          - 22
+          - 23
+          - 24
+          - 25
+          - 26
+          - 27
+          - 28
+          - 29
+          - 30
+          - 31
+          - 32
+          - 33
+          - 34
+          - 35
+          - 36
+          - 37
+          - 38
+          - 39
+          - 40
+          - 41
+          - 42
+          - 43
+          - 44
+          - 45
+          - 46
+          - 47
+          - 48
+          - 49
+          - 50
+          - 51
+          - 52
+          - 53
+          - 54
+          - 55
+          - 56
+          - 57
+          - 58
+          - 59
+          - 60
+          - 61
+          - 62
+          - 63
+          - 64
+          - 65
+          - 66
+          - 67
+          - 68
+          - 69
+          - 70
+          - 71
+          - 72
+          - 73
+          - 74
+          - 75
+          - 76
+          - 77
+          - 78
+          - 79
+          - 80
+          - 81
+          - 82
+          - 83
+          - 84
+          - 85
+          - 86
+          - 87
+          - 88
+          - 89
+          - 90
+          - 91
+          - 92
+          - 93
+          - 94
+          - 95
+          - 96
+          - 97
+          - 98
+          - 99
+          - 100
+    steps:
+      - name: Read configured APT mirrors without network requests
+        env:
+          SAMPLE: ${{ matrix.sample }}
+        shell: bash
+        run: |
+          mkdir -p results
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          architecture = subprocess.check_output(
+              ["dpkg", "--print-architecture"], text=True
+          ).strip()
+          if architecture != "amd64":
+              raise RuntimeError(f"Expected amd64, got {architecture}")
+
+          paths = [pathlib.Path("/etc/apt/sources.list")]
+          paths += sorted(pathlib.Path("/etc/apt/sources.list.d").glob("*.list"))
+          paths += sorted(pathlib.Path("/etc/apt/sources.list.d").glob("*.sources"))
+          sources = {str(path): path.read_text() for path in paths if path.is_file()}
+          if not sources:
+              raise RuntimeError("No APT source files found")
+
+          # Let APT parse both .list and deb822 .sources, including Enabled: no.
+          output = subprocess.check_output(
+              ["apt-get", "--print-uris", "update"], text=True
+          )
+          mirrors = set()
+          for line in output.splitlines():
+              if not line.startswith("'"):
+                  continue
+              uri = line.split("'", 2)[1]
+              if "/dists/" not in uri:
+                  raise RuntimeError(f"Unexpected APT index URI: {uri}")
+              mirrors.add(uri.split("/dists/", 1)[0].rstrip("/"))
+          if not mirrors:
+              raise RuntimeError("APT returned no enabled mirrors")
+
+          report = {
+              "sample": int(os.environ["SAMPLE"]),
+              "architecture": architecture,
+              "image_version": os.environ.get("ImageVersion", "unknown"),
+              "mirrors": sorted(mirrors),
+              "sources": sources,
+              "apt_print_uris": output,
+          }
+          pathlib.Path(f"results/sample-{report['sample']}.json").write_text(
+              json.dumps(report, indent=2) + "\n"
+          )
+          print(json.dumps(report, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apt-mirrors-${{ matrix.sample }}
+          path: results/*.json
+          if-no-files-found: error
+          retention-days: 7
+
+  summarize:
+    name: Combined statistics
+    needs: collect
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: apt-mirrors-*
+          merge-multiple: true
+          path: results
+      - name: Count runners per mirror
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import collections
+          import csv
+          import json
+          import os
+          import pathlib
+
+          reports = [
+              json.loads(path.read_text())
+              for path in sorted(pathlib.Path("results").glob("sample-*.json"))
+          ]
+          samples = [report["sample"] for report in reports]
+          if len(samples) != len(set(samples)):
+              raise RuntimeError("Duplicate sample IDs")
+          missing = sorted(set(range(1, 101)) - set(samples))
+          counts = collections.Counter(
+              mirror for report in reports for mirror in set(report["mirrors"])
+          )
+          rows = [
+              (mirror, count, f"{count / len(reports):.1%}")
+              for mirror, count in counts.most_common()
+          ]
+          with open("results/statistics.csv", "w", newline="") as file:
+              writer = csv.writer(file)
+              writer.writerow(["mirror", "runners", "percent_of_collected"])
+              writer.writerows(rows)
+          summary = [
+              "# APT mirror statistics",
+              "",
+              f"Collected: **{len(reports)} / 100** Ubuntu 24.04 x64 samples.",
+              "",
+              "Each configured mirror is counted once per runner; percentages use collected samples.",
+              "No downloads or updates were performed. Mirror redirects were not resolved.",
+              "Raw source files and APT index URIs are included in the artifact.",
+              "",
+              "| Configured mirror | Runners | % of collected |",
+              "| --- | ---: | ---: |",
+              *[f"| {mirror.replace('|', '%7C')} | {count} | {percent} |"
+                for mirror, count, percent in rows],
+          ]
+          if missing:
+              summary += ["", f"Missing samples: {missing}. Statistics are incomplete."]
+          text = "\n".join(summary) + "\n"
+          pathlib.Path("results/statistics.md").write_text(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
+              file.write(text)
+          print(text)
+          if missing or set(samples) != set(range(1, 101)):
+              raise RuntimeError("Expected exactly 100 samples; see the summary")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: apt-mirror-statistics
+          path: results/
+          if-no-files-found: error
+          retention-days: 7
